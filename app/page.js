@@ -11,16 +11,16 @@ export default function Home() {
 
   /* -------------------- PDF & Annotation State -------------------- */
   const [pdfLoaded, setPdfLoaded] = useState(false);
-  const [pdfDoc, setPdfDoc] = useState(null); // from pdf.js
+  const [pdfDoc, setPdfDoc] = useState(null);
   const [originalPdfBytes, setOriginalPdfBytes] = useState(null);
-  // Unscaled sizes
+  // Store unscaled page dimensions
   const pageSizesRef = useRef([]);
-  // Each annotation: { id, pageIndex, xRatio, yRatio, text, fontSize, color, highlight, widthRatio }
+  // Each annotation => { pageIndex, xRatio, yRatio, text, fontSize, color, highlight, widthRatio, heightRatio }
   const [annotations, setAnnotations] = useState([]);
   const [placingAnnotation, setPlacingAnnotation] = useState(false);
 
-  // Track which box is “active” so we can reflect that box’s font size in the toolbar
-  const [activeAnnotationIndex, setActiveAnnotationIndex] = useState(null);
+  // Index of the currently "active" box => we reflect its color, highlight, fontSize in the toolbar
+  const [activeIndex, setActiveIndex] = useState(null);
 
   /* -------------------- Zoom & Font Size -------------------- */
   const zoomOptions = [
@@ -39,14 +39,43 @@ export default function Home() {
   ];
   const [zoomChoice, setZoomChoice] = useState("Automatic Zoom");
   const [zoomScale, setZoomScale] = useState(1.0);
-  const [fontSize, setFontSize] = useState(14); // 1..100
 
-  // Colors
+  // The user’s text style (1..100 PDF units)
+  const [fontSize, setFontSize] = useState(14);
   const [textColor, setTextColor] = useState("#000000");
   const [highlightColor, setHighlightColor] = useState("#ffff00");
 
   // PDF container
   const pdfContainerRef = useRef(null);
+
+  /* ---------------------------------------------------------------- */
+  /* 1) hexToRgba must be declared at the top to avoid reference errors. */
+  function hexToRgba(hex, alpha = 1.0) {
+    if (!hex.startsWith("#")) return hex;
+    let raw = hex.slice(1);
+    if (raw.length === 3) {
+      raw = raw
+        .split("")
+        .map((c) => c + c)
+        .join("");
+    }
+    const num = parseInt(raw, 16);
+    const r = (num >> 16) & 255;
+    const g = (num >> 8) & 255;
+    const b = num & 255;
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 2) computeDomFontSize => used by applyAnnotations & toolbar updates. */
+  function computeDomFontSize(ann, pageEl) {
+    // Convert annotation.fontSize from PDF units => DOM px
+    if (!pageSizesRef.current[ann.pageIndex]) return ann.fontSize;
+    const { height: unscaledH } = pageSizesRef.current[ann.pageIndex];
+    const domH = pageEl.clientHeight;
+    const ratio = domH / unscaledH;
+    return Math.max(2, ann.fontSize * ratio);
+  }
 
   /* -------------------- Dark Mode on Mount -------------------- */
   useEffect(() => {
@@ -78,7 +107,7 @@ export default function Home() {
       setPdfDoc(doc);
       setPdfLoaded(true);
 
-      // fetch unscaled page sizes
+      // gather unscaled page sizes
       const count = doc.numPages;
       const arr = [];
       for (let i = 1; i <= count; i++) {
@@ -88,7 +117,6 @@ export default function Home() {
       }
       pageSizesRef.current = arr;
 
-      // default scale => 1.0
       setZoomChoice("Automatic Zoom");
       setZoomScale(1.0);
 
@@ -97,7 +125,7 @@ export default function Home() {
     reader.readAsArrayBuffer(file);
   }
 
-  /* -------------------- ZOOM -------------------- */
+  /* -------------------- Zoom Logic + High-Res Rendering -------------------- */
   function interpretZoomChoice(choice) {
     if (!pageSizesRef.current.length) return 1.0;
     const firstPage = pageSizesRef.current[0];
@@ -136,26 +164,35 @@ export default function Home() {
     await renderPDF(pdfDoc, newScale);
   }
 
-  /* -------------------- RENDER PDF at scale -------------------- */
   async function renderPDF(doc, scale) {
     const container = pdfContainerRef.current;
     if (!container) return;
     container.innerHTML = "";
 
-    for (let pageNum = 1; pageNum <= doc.numPages; pageNum++) {
-      const page = await doc.getPage(pageNum);
+    const dpr = window.devicePixelRatio || 1;
+
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
       const viewport = page.getViewport({ scale });
-      const pageDiv = document.createElement("div");
-      pageDiv.className = "pdf-page";
-      pageDiv.style.width = viewport.width + "px";
-      pageDiv.style.height = viewport.height + "px";
+      const width = viewport.width;
+      const height = viewport.height;
 
       const canvas = document.createElement("canvas");
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
       const ctx = canvas.getContext("2d");
-      pageDiv.appendChild(canvas);
 
+      // device pixel ratio
+      canvas.style.width = width + "px";
+      canvas.style.height = height + "px";
+      canvas.width = Math.floor(width * dpr);
+      canvas.height = Math.floor(height * dpr);
+      ctx.scale(dpr, dpr);
+
+      const pageDiv = document.createElement("div");
+      pageDiv.className = "pdf-page";
+      pageDiv.style.width = width + "px";
+      pageDiv.style.height = height + "px";
+
+      pageDiv.appendChild(canvas);
       container.appendChild(pageDiv);
 
       await page.render({ canvasContext: ctx, viewport }).promise;
@@ -168,75 +205,61 @@ export default function Home() {
     applyAnnotations();
   }
 
-  /* -------------------- Re-draw boxes if doc changes, scale changes, or annotation count changes -------------------- */
+  // re-render if doc changes, zoom changes, or annotation count changes
   useEffect(() => {
-    // If we haven't loaded or have no doc, do nothing
     if (!pdfLoaded || !pdfDoc) return;
     renderPDF(pdfDoc, zoomScale);
-    // re-render if doc changes, zoom changes, or the annotation *count* changes
-    // so new or removed boxes appear immediately
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pdfDoc, pdfLoaded, zoomScale, annotations.length]);
 
-  /* -------------------- DIRECT DOM UPDATES for text/color/size changes -------------------- */
+  /* -------------------- Update active annotation on toolbar changes -------------------- */
+  // If user changes fontSize/textColor/highlightColor, we update the active annotation
+  // and its DOM node, so it instantly grows/shrinks or changes color while keeping focus.
   useEffect(() => {
-    // If the user changes “fontSize” and there's an active annotation, update the DOM node’s size
-    // same logic for textColor, highlightColor
-    if (activeAnnotationIndex == null) return;
-    const ann = annotations[activeAnnotationIndex];
+    if (activeIndex == null) return;
+    const ann = annotations[activeIndex];
     if (!ann) return;
 
-    // Update the annotation state
-    const clampedSize = Math.max(1, Math.min(fontSize, 100));
-    if (ann.fontSize !== clampedSize) {
-      setAnnotations((prev) => {
-        const arr = [...prev];
-        if (arr[activeAnnotationIndex]) {
-          arr[activeAnnotationIndex].fontSize = clampedSize;
-        }
-        return arr;
-      });
-    }
+    // update the annotation in state
+    setAnnotations((prev) => {
+      const arr = [...prev];
+      if (arr[activeIndex]) {
+        arr[activeIndex].fontSize = Math.min(100, Math.max(1, fontSize));
+        arr[activeIndex].color = textColor;
+        arr[activeIndex].highlight = highlightColor;
+      }
+      return arr;
+    });
 
-    // Also update the DOM node if it exists
+    // Then update the DOM node
     const container = pdfContainerRef.current;
     if (!container) return;
-    const pageEls = container.querySelectorAll(".pdf-page");
-    const pageEl = pageEls[ann.pageIndex];
-    if (!pageEl) return;
+    const pages = container.querySelectorAll(".pdf-page");
+    if (ann.pageIndex >= pages.length) return;
+    const pageEl = pages[ann.pageIndex];
     const textLayer = pageEl.querySelector(".text-layer");
     if (!textLayer) return;
+    const box = textLayer.querySelector(
+      `.editable-text[data-annindex='${activeIndex}']`
+    );
+    if (!box) return;
 
-    // find the box that belongs to this annotation
-    // e.g. we match by an ID or index. For simplicity, match by data-annid or array index
-    // but we haven't implemented a stable ID approach. We can store a small marker in the DOM
-    // We'll do: data-annindex
-    // => We'll adapt applyAnnotations to set data-annindex=“${idx}”
-    // => Then we find that node and update
+    // recalc DOM font size
+    const newSize = computeDomFontSize(ann, pageEl);
+    box.style.fontSize = newSize + "px";
+    box.style.color = ann.color;
+    box.style.backgroundColor = hexToRgba(ann.highlight, 0.4);
 
-    // We'll do a quick approach: if the user is currently focused on a box, we likely do “last” or the “active” node
-    // We'll just find it in the text-layer
-    const boxes = textLayer.querySelectorAll(".editable-text");
-    for (let b of boxes) {
-      const annIndexStr = b.getAttribute("data-annindex");
-      if (annIndexStr == activeAnnotationIndex) {
-        // found the DOM node
-        // update font size
-        b.style.fontSize = computeDomFontSize(ann, pageEl) + "px";
-        b.style.color = ann.color;
-        b.style.backgroundColor = hexToRgba(ann.highlight, 0.4);
-      }
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fontSize, textColor, highlightColor]);
 
-  /* -------------------- applyAnnotations draws existing boxes to the DOM (no re-creation if text changes) -------------------- */
+  /* -------------------- applyAnnotations => draws boxes, resizers, etc. -------------------- */
   function applyAnnotations() {
     const container = pdfContainerRef.current;
     if (!container) return;
     const pageEls = container.querySelectorAll(".pdf-page");
 
-    // Clear text-layers
+    // clear old
     pageEls.forEach((p) => {
       const t = p.querySelector(".text-layer");
       if (t) t.innerHTML = "";
@@ -245,7 +268,6 @@ export default function Home() {
     annotations.forEach((ann, idx) => {
       if (ann.pageIndex >= pageEls.length) return;
       const pageEl = pageEls[ann.pageIndex];
-      if (!pageEl) return;
       const textLayer = pageEl.querySelector(".text-layer");
       if (!textLayer) return;
 
@@ -253,10 +275,9 @@ export default function Home() {
       const x = ann.xRatio * pageEl.clientWidth;
       const y = ann.yRatio * pageEl.clientHeight;
 
-      // create a box
       const box = document.createElement("div");
       box.className = "editable-text";
-      box.setAttribute("data-annindex", idx.toString()); // for direct updates
+      box.setAttribute("data-annindex", idx.toString());
       box.contentEditable = pdfLoaded ? "true" : "false";
       box.style.left = x + "px";
       box.style.top = y + "px";
@@ -265,23 +286,33 @@ export default function Home() {
       box.style.backgroundColor = hexToRgba(ann.highlight, 0.4);
       box.innerText = ann.text;
 
+      // If annotation has widthRatio, heightRatio => apply
+      if (ann.widthRatio) {
+        box.style.width = ann.widthRatio * pageEl.clientWidth + "px";
+      }
+      if (ann.heightRatio) {
+        box.style.height = ann.heightRatio * pageEl.clientHeight + "px";
+      }
+
+      // Draggable
       let isDragging = false;
       let offsetX = 0,
         offsetY = 0;
       box.addEventListener("mousedown", (e) => {
         if (!pdfLoaded) return;
+        // skip if resizer clicked
+        if (e.target.classList.contains("resizer")) return;
         isDragging = true;
         const r = box.getBoundingClientRect();
         offsetX = e.clientX - r.left;
         offsetY = e.clientY - r.top;
         e.stopPropagation();
-        // set active annotation => update font size input
-        setActiveAnnotationIndex(idx);
-        // clamp in code
-        let f = ann.fontSize;
-        if (f < 1) f = 1;
-        if (f > 100) f = 100;
-        setFontSize(f);
+
+        // user focusing => set toolbar from annotation
+        setActiveIndex(idx);
+        setFontSize(Math.min(100, ann.fontSize));
+        setTextColor(ann.color);
+        setHighlightColor(ann.highlight);
       });
       document.addEventListener("mousemove", (e) => {
         if (isDragging) {
@@ -289,7 +320,7 @@ export default function Home() {
           let newX = e.clientX - rect.left - offsetX;
           let newY = e.clientY - rect.top - offsetY;
 
-          // clamp so box doesn't vanish
+          // clamp
           const boxW = box.offsetWidth;
           const boxH = box.offsetHeight;
           if (newX < 0) newX = 0;
@@ -302,10 +333,8 @@ export default function Home() {
 
           setAnnotations((prev) => {
             const arr = [...prev];
-            if (arr[idx]) {
-              arr[idx].xRatio = newX / rect.width;
-              arr[idx].yRatio = newY / rect.height;
-            }
+            arr[idx].xRatio = newX / rect.width;
+            arr[idx].yRatio = newY / rect.height;
             return arr;
           });
         }
@@ -315,45 +344,94 @@ export default function Home() {
         measureWidthRatio(box, ann, pageEl);
       });
 
-      // placeholder logic
+      // Placeholder logic
       box.addEventListener("focus", () => {
         if (box.innerText === "Edit me!") {
           box.innerText = "";
           setAnnotations((prev) => {
             const arr = [...prev];
-            if (arr[idx]) arr[idx].text = "";
+            arr[idx].text = "";
             return arr;
           });
         }
-        measureWidthRatio(box, ann, pageEl);
       });
-      // Paste => intercept
+      // Pasting
       box.addEventListener("paste", (e) => {
         if (!autoFormatPaste) return;
         e.preventDefault();
         const txt = e.clipboardData.getData("text/plain");
         document.execCommand("insertText", false, txt);
       });
-      // On input => store text
-      box.addEventListener("input", (e) => {
+      // on input => store text
+      box.addEventListener("input", () => {
         setAnnotations((prev) => {
           const arr = [...prev];
-          if (arr[idx]) arr[idx].text = box.innerText;
+          arr[idx].text = box.innerText;
           return arr;
         });
-        measureWidthRatio(box, ann, pageEl);
       });
-      // If user presses backspace/delete on an empty box => remove
+      // if empty on backspace => remove
       box.addEventListener("keydown", (e) => {
-        if (!pdfLoaded) return;
         if (
           (e.key === "Backspace" || e.key === "Delete") &&
           !box.innerText.trim()
         ) {
           e.preventDefault();
-          // remove from state
           setAnnotations((prev) => prev.filter((_, i) => i !== idx));
         }
+      });
+
+      // Resizer handle
+      const resizer = document.createElement("div");
+      resizer.className = "resizer";
+      box.appendChild(resizer);
+
+      let isResizing = false;
+      let startW = 0,
+        startH = 0,
+        startX = 0,
+        startY = 0;
+      resizer.addEventListener("mousedown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        isResizing = true;
+        const r = box.getBoundingClientRect();
+        startW = r.width;
+        startH = r.height;
+        startX = e.clientX;
+        startY = e.clientY;
+      });
+      document.addEventListener("mousemove", (e) => {
+        if (!isResizing) return;
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+        let newW = startW + deltaX;
+        let newH = startH + deltaY;
+
+        // clamp min size
+        if (newW < 30) newW = 30;
+        if (newH < 20) newH = 20;
+
+        // clamp so it doesn't go off the page
+        const rect = pageEl.getBoundingClientRect();
+        const boxRect = box.getBoundingClientRect();
+        let left = boxRect.left - rect.left;
+        let top = boxRect.top - rect.top;
+        if (left + newW > rect.width) newW = rect.width - left;
+        if (top + newH > rect.height) newH = rect.height - top;
+
+        box.style.width = newW + "px";
+        box.style.height = newH + "px";
+
+        setAnnotations((prev) => {
+          const arr = [...prev];
+          arr[idx].widthRatio = newW / rect.width;
+          arr[idx].heightRatio = newH / rect.height;
+          return arr;
+        });
+      });
+      document.addEventListener("mouseup", () => {
+        isResizing = false;
       });
 
       textLayer.appendChild(box);
@@ -361,34 +439,10 @@ export default function Home() {
     });
   }
 
-  function computeDomFontSize(ann, pageEl) {
-    if (!pageSizesRef.current[ann.pageIndex]) return ann.fontSize;
-    const { height: unscaledH } = pageSizesRef.current[ann.pageIndex];
-    const domH = pageEl.clientHeight;
-    const ratio = domH / unscaledH;
-    return Math.max(2, ann.fontSize * ratio);
-  }
-
   function measureWidthRatio(el, ann, pageEl) {
     const wPx = el.offsetWidth;
     const pW = pageEl.clientWidth;
     ann.widthRatio = wPx / pW;
-  }
-
-  function hexToRgba(hex, alpha = 1.0) {
-    if (!hex.startsWith("#")) return hex;
-    let raw = hex.slice(1);
-    if (raw.length === 3) {
-      raw = raw
-        .split("")
-        .map((c) => c + c)
-        .join("");
-    }
-    const num = parseInt(raw, 16);
-    const r = (num >> 16) & 255;
-    const g = (num >> 8) & 255;
-    const b = num & 255;
-    return `rgba(${r},${g},${b},${alpha})`;
   }
 
   /* -------------------- Add Text -------------------- */
@@ -400,7 +454,7 @@ export default function Home() {
     if (placingAnnotation) return;
     setPlacingAnnotation(true);
 
-    // pointer-events=none => click passes through
+    // pointerEvents=none => passes clicks to PDF
     const div = document.createElement("div");
     div.className = "editable-text";
     div.style.pointerEvents = "none";
@@ -408,11 +462,11 @@ export default function Home() {
     div.style.transform = "translate(-10px, -10px)";
     div.style.borderColor = "#d44";
     div.style.padding = "2px";
+    div.innerText = "Edit me!";
     div.style.backgroundColor = hexToRgba(highlightColor, 0.4);
     div.style.color = textColor;
-    div.innerText = "Edit me!";
 
-    // approximate the DOM size
+    // approximate the DOM font size
     let approximate = Math.min(100, fontSize);
     if (pdfDoc && pageSizesRef.current.length > 0) {
       const firstPage = pageSizesRef.current[0];
@@ -437,8 +491,10 @@ export default function Home() {
       const pageEl = e.target.closest(".pdf-page");
       if (pageEl) {
         const rect = pageEl.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        // subtract 10 => matches translate(-10px, -10px)
+        const x = e.clientX - rect.left - 10;
+        const y = e.clientY - rect.top - 10;
+
         const pages = [
           ...pdfContainerRef.current.querySelectorAll(".pdf-page"),
         ];
@@ -455,10 +511,10 @@ export default function Home() {
             color: textColor,
             highlight: highlightColor,
             widthRatio: 0,
+            heightRatio: 0,
           },
         ]);
 
-        // cleanup
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("click", onClick);
         div.remove();
@@ -503,12 +559,12 @@ export default function Home() {
           if (!currentLine) {
             currentLine = piece;
           } else {
-            const test = currentLine + " " + piece;
-            if (font.widthOfTextAtSize(test, fs) > maxW) {
+            const testLine = currentLine + " " + piece;
+            if (font.widthOfTextAtSize(testLine, fs) > maxW) {
               lines.push(currentLine);
               currentLine = piece;
             } else {
-              currentLine = test;
+              currentLine = testLine;
             }
           }
         });
@@ -540,8 +596,9 @@ export default function Home() {
 
       const fs = ann.fontSize;
       const topY = (1 - ann.yRatio) * ph;
-      const maxW = ann.widthRatio ? ann.widthRatio * pw : 0.8 * pw;
       const lineSpace = fs * 1.2;
+      // If user has widthRatio => that’s how wide we wrap
+      const maxW = ann.widthRatio ? ann.widthRatio * pw : 0.8 * pw;
 
       const rawLines = ann.text.split(/\r?\n/);
       let wrapped = [];
@@ -549,19 +606,18 @@ export default function Home() {
         wrapped.push(...wrapLine(ln, font, fs, maxW));
       });
 
-      // highlight
       if (ann.highlight.toLowerCase() !== "#ffffff") {
-        let widest = 0;
+        let maxWidth = 0;
         for (let ln of wrapped) {
           const w = font.widthOfTextAtSize(ln, fs);
-          if (w > widest) widest = w;
+          if (w > maxWidth) maxWidth = w;
         }
         const totalH = wrapped.length * lineSpace;
         const hY = topY - totalH;
         page.drawRectangle({
           x: ann.xRatio * pw,
           y: hY,
-          width: widest,
+          width: maxWidth,
           height: totalH,
           color: hexToRgb(ann.highlight),
           opacity: 0.4,
@@ -579,8 +635,8 @@ export default function Home() {
       }
     });
 
-    const outBytes = await pdfDocLib.save();
-    const blob = new Blob([outBytes], { type: "application/pdf" });
+    const pdfBytes = await pdfDocLib.save();
+    const blob = new Blob([pdfBytes], { type: "application/pdf" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
     link.download = "edited.pdf";
@@ -607,7 +663,7 @@ export default function Home() {
           onChange={handleFileChange}
         />
 
-        {/* Zoom Dropdown */}
+        {/* Zoom */}
         <label style={{ marginLeft: "1rem" }}>Zoom:</label>
         <select
           value={zoomChoice}
@@ -626,15 +682,13 @@ export default function Home() {
           + Text
         </button>
 
-        {/* Text Color */}
+        {/* Text & Highlight color */}
         <label style={{ marginLeft: "1rem" }}>Text Color:</label>
         <input
           type="color"
           value={textColor}
           onChange={(e) => setTextColor(e.target.value)}
         />
-
-        {/* Highlight */}
         <label style={{ marginLeft: "1rem" }}>Highlight:</label>
         <input
           type="color"
@@ -642,7 +696,7 @@ export default function Home() {
           onChange={(e) => setHighlightColor(e.target.value)}
         />
 
-        {/* Text Size (1..100) */}
+        {/* Font Size (1..100) */}
         <label style={{ marginLeft: "1rem" }}>Text Size:</label>
         <input
           type="number"
@@ -668,20 +722,23 @@ export default function Home() {
             onClick={() => setShowSettings((p) => !p)}
             style={{
               position: "relative",
-              width: "45px",
+              width: 48,
+              height: 48,
+              display: "flex",
+              alignItems: "center",
               justifyContent: "center",
             }}
+            title="Settings"
           >
-            {/* Larger gear icon (width=20, height=20) & center */}
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              width="20"
-              height="20"
+              width="24"
+              height="24"
               fill="currentColor"
               viewBox="0 0 16 16"
               style={{ display: "block", margin: "auto" }}
             >
-              <path d="M8 4a.5.5 0 0 0-.5.5v.55a2.5 2.5 0 0 0-1.03.38l-.5-.5a.5.5 0 1 0-.71.71l.5.5A2.5 2.5 0 0 0 5.38 8H4.5a.5.5 0 0 0 0 1h.88a2.5 2.5 0 0 0 .38 1.03l-.5.5a.5.5 0 1 0 .71.71l.5-.5A2.5 2.5 0 0 0 7.5 11.45v.55a.5.5 0 0 0 1 0v-.55a2.5 2.5 0 0 0 1.03-.38l.5.5a.5.5 0 1 0 .71-.71l-.5-.5A2.5 2.5 0 0 0 11.45 9h.55a.5.5 0 0 0 0-1h-.55a2.5 2.5 0 0 0-.38-1.03l.5-.5a.5.5 0 1 0-.71-.71l-.5.5A2.5 2.5 0 0 0 9 5.55v-.55A.5.5 0 0 0 8 4zm0 3a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" />
+              <path d="M8 4a.5.5 0 0 0-.5.5v.55a2.5 2.5 0 0 0-1.03.38l-.5-.5a.5.5 0 1 0-.71.71l.5.5A2.5 2.5 0 0 0 5.38 8H4.5a.5.5 0 0 0 0 1h.88a2.5 2.5 0 0 0 .38 1.03l-.5.5a.5.5 0 1 0 .71.71l.5-.5c.32.18.67.31 1.03.38v.55a.5.5 0 0 0 1 0v-.55c.36-.07.71-.2 1.03-.38l.5.5a.5.5 0 1 0 .71-.71l-.5-.5A2.5 2.5 0 0 0 11.45 9h.55a.5.5 0 0 0 0-1h-.55a2.5 2.5 0 0 0-.38-1.03l.5-.5a.5.5 0 1 0-.71-.71l-.5.5A2.5 2.5 0 0 0 9 5.55v-.55A.5.5 0 0 0 8 4zm0 3a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" />
             </svg>
             {showSettings && (
               <div className="settings-panel">
@@ -707,7 +764,7 @@ export default function Home() {
         </div>
       </div>
 
-      {/* Drag & Drop area */}
+      {/* Drag area */}
       <div id="drop-area">
         <p>
           Drag &amp; Drop PDF Here
@@ -716,8 +773,8 @@ export default function Home() {
         </p>
       </div>
 
-      {/* PDF Container */}
-      <div ref={pdfContainerRef} id="pdf-container" />
+      {/* PDF container */}
+      <div ref={pdfContainerRef} id="pdf-container"></div>
 
       {/* pdf.js & pdf-lib */}
       <Script
@@ -813,6 +870,17 @@ export default function Home() {
           white-space: pre-wrap;
           word-break: break-word;
         }
+        .resizer {
+          position: absolute;
+          width: 10px;
+          height: 10px;
+          bottom: 0;
+          right: 0;
+          background: #777;
+          cursor: se-resize;
+          pointer-events: all;
+        }
+
         .button {
           display: inline-flex;
           align-items: center;
@@ -839,7 +907,7 @@ export default function Home() {
         }
         .settings-panel {
           position: absolute;
-          top: 40px;
+          top: 48px;
           right: 0;
           background: var(--toolbar-bg);
           backdrop-filter: blur(10px);
