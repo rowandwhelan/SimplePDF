@@ -71,10 +71,10 @@ export default function Home() {
   const annotationsRef = useRef([]);
   const annotationIdCounter = useRef(0);
 
-  // When a text box is active, its id is stored here
+  // When a text box is active, store its id
   const [activeAnnotationId, setActiveAnnotationId] = useState(null);
 
-  // Renamed placingAnnotation state to isPlacingAnnotation
+  // Renamed state variable for placing annotation.
   const [isPlacingAnnotation, setIsPlacingAnnotation] = useState(false);
 
   const pdfContainerRef = useRef(null);
@@ -105,8 +105,7 @@ export default function Home() {
     if (str === "actual size") return 1.0;
     if (str === "page fit") {
       if (!pageSizesRef.current.length) return 1.0;
-      // Subtract toolbar height offset (60px)
-      const offset = 60;
+      const offset = 60; // toolbar height offset
       const { height } = pageSizesRef.current[0];
       const scale = Math.max(0.1, (window.innerHeight - offset) / height);
       console.log("Page Fit scale computed:", scale);
@@ -177,7 +176,7 @@ export default function Home() {
   }
 
   // Determine which style values to use in the toolbar:
-  // If an annotation is active, use its values; otherwise use globals.
+  // If an annotation is active, use its values; otherwise, use global defaults.
   const activeAnnotation = annotations.find((a) => a.id === activeAnnotationId);
   const currentFontSize = activeAnnotation
     ? activeAnnotation.fontSize
@@ -199,12 +198,21 @@ export default function Home() {
         return a;
       });
       updateAnnotations(updated);
-      setTimeout(() => {
-        const box = document.querySelector(
-          `[data-annid="${activeAnnotation.id}"]`
-        );
-        if (box) box.focus();
-      }, 50);
+      // Update the corresponding DOM element immediately.
+      const box = document.querySelector(
+        `[data-annid="${activeAnnotation.id}"]`
+      );
+      if (box) {
+        if (prop === "fontSize") {
+          box.style.fontSize = value * zoomScale + "px";
+        } else if (prop === "color") {
+          box.style.color = value;
+        } else if (prop === "highlight") {
+          box.style.backgroundColor = hexToRgba(value, 0.4);
+        }
+        // Re-focus the box so the cursor remains.
+        setTimeout(() => box.focus(), 50);
+      }
     } else {
       // Update global defaults for new annotations.
       if (prop === "fontSize") setFontSize(value);
@@ -379,7 +387,7 @@ export default function Home() {
         setPdfDoc(doc);
         setPdfLoaded(true);
         setNumPages(doc.numPages);
-        // Update pageSizesRef by fetching each page's original viewport.
+        // Update page sizes
         const sizes = [];
         let count = 0;
         for (let i = 1; i <= doc.numPages; i++) {
@@ -530,7 +538,7 @@ export default function Home() {
     textLayer.appendChild(newBox);
   }
 
-  // Create annotation box.
+  // Create an annotation box.
   function createAnnotationBox(ann, id, pageEl) {
     console.log("Creating annotation box for id:", id);
     const finalFS = ann.fontSize * zoomScale;
@@ -553,6 +561,7 @@ export default function Home() {
     if (ann.heightRatio) {
       box.style.height = ann.heightRatio * pageEl.clientHeight + "px";
     }
+    // We update style on blur and focusout.
     const scheduleRedraw = () => {
       if (!box._redrawTimer) {
         box._redrawTimer = setTimeout(() => {
@@ -577,7 +586,6 @@ export default function Home() {
       },
       true
     );
-
     // Drag events.
     let isDragging = false;
     let offsetX = 0,
@@ -654,6 +662,7 @@ export default function Home() {
       const txt = e.clipboardData.getData("text/plain");
       document.execCommand("insertText", false, txt);
     });
+    // For input events, update annotation text immediately without forcing a redraw (so the box remains focused).
     box.addEventListener("input", () => {
       console.log("Input event in box id:", id, "new text:", box.innerText);
       updateAnnotations(
@@ -664,6 +673,7 @@ export default function Home() {
           return a;
         })
       );
+      // Do not schedule redraw here to avoid losing focus.
     });
     box.addEventListener("keydown", (e) => {
       if (
@@ -1115,7 +1125,6 @@ export default function Home() {
           background: #2c2c2c;
           color: #ddd;
         }
-        /* PDF container uses full viewport width and centers pages */
         #pdf-container {
           display: flex;
           flex-direction: column;
