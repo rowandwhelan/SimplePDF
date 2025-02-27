@@ -41,6 +41,7 @@ function hexToRgba(hex, alpha = 1.0) {
 }
 
 export default function Home() {
+  // Global states
   const [darkMode, setDarkMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [autoFormatPaste, setAutoFormatPaste] = useState(true);
@@ -51,8 +52,10 @@ export default function Home() {
   const [pdfBytes, setPdfBytes] = useState(null);
   const [numPages, setNumPages] = useState(1);
 
+  // Store original page sizes
   const pageSizesRef = useRef([]);
 
+  // Annotations state
   const [annotations, setAnnotations] = useState([]);
   const annotationsRef = useRef([]);
   const annotationIdCounter = useRef(0);
@@ -62,8 +65,10 @@ export default function Home() {
 
   const pdfContainerRef = useRef(null);
 
+  // Current PDF file name
   const currentPdfName = useRef(null);
 
+  // Zoom state
   const [zoomValue, setZoomValue] = useState("100%");
   const [zoomScale, setZoomScale] = useState(1.0);
   const [showZoomMenu, setShowZoomMenu] = useState(false);
@@ -150,10 +155,12 @@ export default function Home() {
     setShowZoomMenu(true);
   }
 
+  // Text style state
   const [fontSize, setFontSize] = useState(14);
   const [textColor, setTextColor] = useState("#000000");
   const [highlightColor, setHighlightColor] = useState("#ffff00");
 
+  // Dark mode setup
   useEffect(() => {
     if (
       window.matchMedia &&
@@ -167,6 +174,7 @@ export default function Home() {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
+  // Settings panel stays open until clicking outside.
   const settingsRef = useRef(null);
   const gearRef = useRef(null);
   useEffect(() => {
@@ -186,6 +194,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showSettings]);
 
+  // Global blur & click listeners.
   useEffect(() => {
     function globalBlurHandler(e) {
       console.log("Global blur event fired on:", e.target);
@@ -213,6 +222,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleGlobalClick);
   }, []);
 
+  // Save before unload.
   useEffect(() => {
     function handleBeforeUnload(e) {
       if (saveProgress && pdfBytes) {
@@ -238,6 +248,7 @@ export default function Home() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [pdfBytes, saveProgress]);
 
+  // On mount, load saved PDF if exists.
   useEffect(() => {
     setTimeout(() => {
       const savedName = localStorage.getItem("currentPdfName");
@@ -250,7 +261,7 @@ export default function Home() {
     }, 100);
   }, []);
 
-  // If pdfDoc or zoom changes, re-render
+  // When pdfDoc or zoomScale changes, re-render pages.
   useEffect(() => {
     if (pdfDoc) {
       if (pdfContainerRef.current) {
@@ -298,7 +309,7 @@ export default function Home() {
         setPdfDoc(doc);
         setPdfLoaded(true);
         setNumPages(doc.numPages);
-        // Force zoom to 100%
+        // Reset zoom to 100%
         setZoomValue("100%");
         setZoomScale(1.0);
       })
@@ -332,16 +343,15 @@ export default function Home() {
     annotationsRef.current = newAnnotations;
   }
 
-  // On new file upload
+  // New file upload
   async function handleFileChange(e) {
     const file = e.target.files[0];
     if (!file || file.type !== "application/pdf") return;
     console.log("Uploading new PDF:", file.name);
-
     if (pdfContainerRef.current) {
       pdfContainerRef.current.innerHTML = "";
     }
-    // Reset zoom
+    // Reset zoom to 100%
     setZoomValue("100%");
     setZoomScale(1.0);
 
@@ -444,12 +454,11 @@ export default function Home() {
     textLayer.appendChild(newBox);
   }
 
-  // IMPORTANT: We do NOT multiply ann.fontSize by ratio anymore!
+  // IMPORTANT: Text size now scales with the PDF zoom.
   function createAnnotationBox(ann, id, pageEl) {
     console.log("Creating annotation box for id:", id);
-    // Instead of using ratio-based scaling, just use the chosen ann.fontSize directly:
-    const domFS = ann.fontSize; // in px
-
+    // Compute final font size as base size times the current zoomScale.
+    const finalFS = ann.fontSize * zoomScale;
     const xPx = ann.xRatio * pageEl.clientWidth;
     const yPx = ann.yRatio * pageEl.clientHeight;
     const box = document.createElement("div");
@@ -457,16 +466,12 @@ export default function Home() {
     box.setAttribute("data-annid", String(id));
     box.style.left = xPx + "px";
     box.style.top = yPx + "px";
-
-    // Use the user-chosen font size directly
-    box.style.fontSize = domFS + "px";
-
+    box.style.fontSize = finalFS + "px";
     box.style.color = ann.color;
     box.style.backgroundColor = hexToRgba(ann.highlight, 0.4);
     box.style.overflow = "hidden";
     box.contentEditable = pdfLoaded ? "true" : "false";
     box.innerText = ann.text;
-
     if (ann.widthRatio) {
       box.style.width = ann.widthRatio * pageEl.clientWidth + "px";
     }
@@ -499,7 +504,7 @@ export default function Home() {
       true
     );
 
-    // Drag events
+    // Drag events.
     let isDragging = false;
     let offsetX = 0,
       offsetY = 0;
@@ -589,7 +594,6 @@ export default function Home() {
       );
     });
 
-    // If box is empty, remove
     box.addEventListener("keydown", (e) => {
       if (
         (e.key === "Backspace" || e.key === "Delete") &&
@@ -602,7 +606,7 @@ export default function Home() {
       }
     });
 
-    // Resizer
+    // Resizer element.
     const resizer = document.createElement("div");
     resizer.className = "resizer";
     box.appendChild(resizer);
@@ -656,7 +660,6 @@ export default function Home() {
         console.log("Ended resizing box id:", id);
       }
     });
-
     return box;
   }
 
@@ -668,7 +671,6 @@ export default function Home() {
     if (placingAnnotation) return;
     setPlacingAnnotation(true);
 
-    // For the floating placeholder, just use the chosen fontSize
     const div = document.createElement("div");
     div.className = "editable-text";
     div.style.pointerEvents = "none";
@@ -680,8 +682,8 @@ export default function Home() {
     div.style.color = textColor;
     div.style.overflow = "hidden";
     div.innerText = "Edit me!";
-    // Use the exact user-chosen fontSize in px
-    div.style.fontSize = fontSize + "px";
+    // Use the chosen fontSize scaled by current zoom
+    div.style.fontSize = fontSize * zoomScale + "px";
 
     document.body.appendChild(div);
     console.log("Floating text box created for placement");
@@ -702,14 +704,13 @@ export default function Home() {
           ...pdfContainerRef.current.querySelectorAll(".pdf-page"),
         ];
         const pIndex = pages.indexOf(pageEl);
-
         const newAnn = {
           id: annotationIdCounter.current++,
           pageIndex: pIndex,
           xRatio: x / rect.width,
           yRatio: y / rect.height,
           text: "Edit me!",
-          fontSize: fontSize,
+          fontSize: fontSize, // store base font size
           color: textColor,
           highlight: highlightColor,
           widthRatio: 0,
@@ -717,7 +718,6 @@ export default function Home() {
         };
         updateAnnotations([...annotationsRef.current, newAnn]);
         console.log("New annotation added:", newAnn);
-
         const textLayer = pageEl.querySelector(".text-layer");
         if (textLayer) {
           const boxNode = createAnnotationBox(newAnn, newAnn.id, pageEl);
@@ -813,7 +813,6 @@ export default function Home() {
       rawLines.forEach((ln) => {
         wrapped.push(...wrapLine(ln, font, fs, maxW));
       });
-
       if (ann.highlight.toLowerCase() !== "#ffffff") {
         let maxWidth = 0;
         for (let ln of wrapped) {
@@ -842,7 +841,6 @@ export default function Home() {
         });
       }
     }
-
     const outBytes = await pdfDocLib.save();
     const blob = new Blob([outBytes], { type: "application/pdf" });
     const link = document.createElement("a");
@@ -856,7 +854,6 @@ export default function Home() {
       <Head>
         <title>Ultramodern PDF Editor</title>
       </Head>
-
       <div id="toolbar">
         <label htmlFor="file-input" className="button primary">
           Upload PDF
@@ -893,25 +890,21 @@ export default function Home() {
             </div>
           )}
         </div>
-
         <button onClick={handleAddTextBox} className="button secondary">
           + Text
         </button>
-
         <label style={{ marginLeft: "1rem" }}>Color:</label>
         <input
           type="color"
           value={textColor}
           onChange={(e) => setTextColor(e.target.value)}
         />
-
         <label style={{ marginLeft: "1rem" }}>Highlight:</label>
         <input
           type="color"
           value={highlightColor}
           onChange={(e) => setHighlightColor(e.target.value)}
         />
-
         <label style={{ marginLeft: "1rem" }}>Text Size:</label>
         <input
           type="number"
@@ -926,12 +919,10 @@ export default function Home() {
           }}
           style={{ width: "60px" }}
         />
-
         <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
           <button onClick={handleDownload} className="button primary">
             Download PDF
           </button>
-
           <button
             className="button secondary"
             onClick={() => setShowSettings((p) => !p)}
@@ -947,12 +938,12 @@ export default function Home() {
             title="Settings"
           >
             <svg
-              style={{ width: "24px", height: "24px", fill: "currentColor" }}
+              xmlns="http://www.w3.org/2000/svg"
+              style={{ width: "36px", height: "36px", fill: "currentColor" }}
               viewBox="0 0 16 16"
             >
               <path d="M8 4a.5.5 0 0 0-.5.5v.55a2.5.5.5 0 0 0-1.03.38l-.5-.5a.5.5 0 1 0-.71.71l.5.5A2.5.5.5 0 0 0 5.38 8H4.5a.5.5 0 0 0 0 1h.88a2.5.2.5.5 0 0 0 .38 1.03l-.5.5a.5.5 0 1 0 .71.71l.5-.5c.32.18.67.31 1.03.38v.55a.5.5 0 0 0 1 0v-.55c.36-.07.71-.2 1.03-.38l.5.5a.5.5 0 1 0 .71-.71l-.5-.5A2.5.5.5 0 0 0 11.45 9h.55a.5.5 0 0 0 0-1h-.55a2.5.2.5.5 0 0 0-.38-1.03l.5-.5a.5.5 0 1 0-.71-.71l-.5.5A2.5.5.5 0 0 0 9 5.55v-.55A.5.5 0 0 0 8 4zm0 3a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" />
             </svg>
-
             {showSettings && (
               <div className="settings-panel" ref={settingsRef}>
                 <div className="settings-item">
@@ -988,7 +979,6 @@ export default function Home() {
           </button>
         </div>
       </div>
-
       <div id="drop-area">
         <p>
           Drag &amp; Drop PDF Here
@@ -996,9 +986,7 @@ export default function Home() {
           or click "Upload PDF"
         </p>
       </div>
-
       <div ref={pdfContainerRef} id="pdf-container"></div>
-
       <Script
         src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.14.305/pdf.min.js"
         strategy="beforeInteractive"
@@ -1007,7 +995,6 @@ export default function Home() {
         src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"
         strategy="beforeInteractive"
       />
-
       <style jsx global>{`
         :root {
           --bg-color: #fafafa;
