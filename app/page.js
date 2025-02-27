@@ -74,7 +74,7 @@ export default function Home() {
   // When a text box is active, store its id
   const [activeAnnotationId, setActiveAnnotationId] = useState(null);
 
-  // Renamed state variable for placing annotation.
+  // State for placing an annotation
   const [isPlacingAnnotation, setIsPlacingAnnotation] = useState(false);
 
   const pdfContainerRef = useRef(null);
@@ -99,6 +99,10 @@ export default function Home() {
     "300%",
     "400%",
   ];
+
+  // Make sure to define gearRef and settingsRef.
+  const gearRef = useRef(null);
+  const settingsRef = useRef(null);
 
   function parseZoomValue(str) {
     str = str.trim().toLowerCase();
@@ -188,7 +192,7 @@ export default function Home() {
     ? activeAnnotation.highlight
     : highlightColor;
 
-  // When a style control changes, update only the active annotation (if any) and re‑focus its box.
+  // When a style control changes, update only the active annotation and re‑focus its box.
   const updateActiveAnnotation = (prop, value) => {
     if (activeAnnotation) {
       const updated = annotationsRef.current.map((a) => {
@@ -198,20 +202,26 @@ export default function Home() {
         return a;
       });
       updateAnnotations(updated);
-      // Update the corresponding DOM element immediately.
       const box = document.querySelector(
         `[data-annid="${activeAnnotation.id}"]`
       );
       if (box) {
         if (prop === "fontSize") {
           box.style.fontSize = value * zoomScale + "px";
+          box.focus();
+          const range = document.createRange();
+          range.selectNodeContents(box);
+          range.collapse(false);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
         } else if (prop === "color") {
           box.style.color = value;
+          box.focus();
         } else if (prop === "highlight") {
           box.style.backgroundColor = hexToRgba(value, 0.4);
+          box.focus();
         }
-        // Re-focus the box so the cursor remains.
-        setTimeout(() => box.focus(), 50);
       }
     } else {
       // Update global defaults for new annotations.
@@ -252,24 +262,20 @@ export default function Home() {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Settings panel: remain open when clicking inside.
-  const settingsRef = useRef(null);
-  const gearRef = useRef(null);
+  // Settings panel: use a click listener on the document to close panel only if click is outside.
   useEffect(() => {
-    function handleOutsideClick(e) {
-      if (!showSettings) return;
+    function handleDocumentClick(e) {
       if (
-        settingsRef.current &&
-        !settingsRef.current.contains(e.target) &&
-        gearRef.current &&
-        !gearRef.current.contains(e.target)
+        showSettings &&
+        !e.target.closest(".settings-panel") &&
+        !e.target.closest("[title='Settings']")
       ) {
         console.log("Clicked outside settings, closing panel");
         setShowSettings(false);
       }
     }
-    document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("click", handleDocumentClick);
+    return () => document.removeEventListener("click", handleDocumentClick);
   }, [showSettings]);
 
   // Global blur & click listeners.
@@ -561,7 +567,6 @@ export default function Home() {
     if (ann.heightRatio) {
       box.style.height = ann.heightRatio * pageEl.clientHeight + "px";
     }
-    // We update style on blur and focusout.
     const scheduleRedraw = () => {
       if (!box._redrawTimer) {
         box._redrawTimer = setTimeout(() => {
@@ -662,7 +667,6 @@ export default function Home() {
       const txt = e.clipboardData.getData("text/plain");
       document.execCommand("insertText", false, txt);
     });
-    // For input events, update annotation text immediately without forcing a redraw (so the box remains focused).
     box.addEventListener("input", () => {
       console.log("Input event in box id:", id, "new text:", box.innerText);
       updateAnnotations(
@@ -673,7 +677,6 @@ export default function Home() {
           return a;
         })
       );
-      // Do not schedule redraw here to avoid losing focus.
     });
     box.addEventListener("keydown", (e) => {
       if (
@@ -761,7 +764,6 @@ export default function Home() {
     div.style.color = textColor;
     div.style.overflow = "hidden";
     div.innerText = "Edit me!";
-    // Floating placeholder uses base font size scaled by zoomScale.
     div.style.fontSize = fontSize * zoomScale + "px";
     document.body.appendChild(div);
     console.log("Floating text box created for placement");
@@ -786,7 +788,7 @@ export default function Home() {
           xRatio: x / rect.width,
           yRatio: y / rect.height,
           text: "Edit me!",
-          fontSize: fontSize, // base font size for new annotation
+          fontSize: fontSize,
           color: textColor,
           highlight: highlightColor,
           widthRatio: 0,
@@ -1019,12 +1021,7 @@ export default function Home() {
               style={{ width: "36px", height: "36px" }}
             />
             {showSettings && (
-              <div
-                className="settings-panel"
-                ref={settingsRef}
-                onMouseDown={stopPropagation}
-                onClick={stopPropagation}
-              >
+              <div className="settings-panel" ref={settingsRef}>
                 <label className="settings-item">
                   <span>Dark Mode</span>
                   <input
