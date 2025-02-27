@@ -47,7 +47,7 @@ export default function Home() {
     e.preventDefault();
   };
 
-  // Global states
+  // Global states and defaults
   const [darkMode, setDarkMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [autoFormatPaste, setAutoFormatPaste] = useState(true);
@@ -58,16 +58,24 @@ export default function Home() {
   const [pdfBytes, setPdfBytes] = useState(null);
   const [numPages, setNumPages] = useState(1);
 
+  // Global default text style (for new annotations)
+  const [fontSize, setFontSize] = useState(14);
+  const [textColor, setTextColor] = useState("#000000");
+  const [highlightColor, setHighlightColor] = useState("#ffff00");
+
   // Store original (unscaled) page sizes
   const pageSizesRef = useRef([]);
 
-  // Annotations state
+  // Annotations state (each annotation holds its own style properties)
   const [annotations, setAnnotations] = useState([]);
   const annotationsRef = useRef([]);
   const annotationIdCounter = useRef(0);
 
-  const [placingAnnotation, setPlacingAnnotation] = useState(false);
+  // When a text box is active, its id is stored here
   const [activeAnnotationId, setActiveAnnotationId] = useState(null);
+
+  // Renamed placingAnnotation state to isPlacingAnnotation
+  const [isPlacingAnnotation, setIsPlacingAnnotation] = useState(false);
 
   const pdfContainerRef = useRef(null);
 
@@ -97,7 +105,8 @@ export default function Home() {
     if (str === "actual size") return 1.0;
     if (str === "page fit") {
       if (!pageSizesRef.current.length) return 1.0;
-      const offset = 200;
+      // Subtract toolbar height offset (60px)
+      const offset = 60;
       const { height } = pageSizesRef.current[0];
       const scale = Math.max(0.1, (window.innerHeight - offset) / height);
       console.log("Page Fit scale computed:", scale);
@@ -167,10 +176,42 @@ export default function Home() {
     setShowZoomMenu(true);
   }
 
-  // Text style state
-  const [fontSize, setFontSize] = useState(14);
-  const [textColor, setTextColor] = useState("#000000");
-  const [highlightColor, setHighlightColor] = useState("#ffff00");
+  // Determine which style values to use in the toolbar:
+  // If an annotation is active, use its values; otherwise use globals.
+  const activeAnnotation = annotations.find((a) => a.id === activeAnnotationId);
+  const currentFontSize = activeAnnotation
+    ? activeAnnotation.fontSize
+    : fontSize;
+  const currentTextColor = activeAnnotation
+    ? activeAnnotation.color
+    : textColor;
+  const currentHighlight = activeAnnotation
+    ? activeAnnotation.highlight
+    : highlightColor;
+
+  // When a style control changes, update only the active annotation (if any) and re‑focus its box.
+  const updateActiveAnnotation = (prop, value) => {
+    if (activeAnnotation) {
+      const updated = annotationsRef.current.map((a) => {
+        if (a.id === activeAnnotation.id) {
+          return { ...a, [prop]: value };
+        }
+        return a;
+      });
+      updateAnnotations(updated);
+      setTimeout(() => {
+        const box = document.querySelector(
+          `[data-annid="${activeAnnotation.id}"]`
+        );
+        if (box) box.focus();
+      }, 50);
+    } else {
+      // Update global defaults for new annotations.
+      if (prop === "fontSize") setFontSize(value);
+      if (prop === "color") setTextColor(value);
+      if (prop === "highlight") setHighlightColor(value);
+    }
+  };
 
   // On mount, load saved "saveProgress" setting.
   useEffect(() => {
@@ -290,7 +331,7 @@ export default function Home() {
     }, 100);
   }, []);
 
-  // When pdfDoc or zoomScale changes, re-render pages.
+  // Re-render pages when pdfDoc or zoomScale changes.
   useEffect(() => {
     if (pdfDoc) {
       if (pdfContainerRef.current) {
@@ -338,6 +379,19 @@ export default function Home() {
         setPdfDoc(doc);
         setPdfLoaded(true);
         setNumPages(doc.numPages);
+        // Update pageSizesRef by fetching each page's original viewport.
+        const sizes = [];
+        let count = 0;
+        for (let i = 1; i <= doc.numPages; i++) {
+          doc.getPage(i).then((page) => {
+            const vp = page.getViewport({ scale: 1 });
+            sizes[i - 1] = { width: vp.width, height: vp.height };
+            count++;
+            if (count === doc.numPages) {
+              pageSizesRef.current = sizes;
+            }
+          });
+        }
         // Reset zoom to 100%
         setZoomValue("100%");
         setZoomScale(1.0);
@@ -395,13 +449,13 @@ export default function Home() {
       setPdfDoc(doc);
       setPdfLoaded(true);
       setNumPages(doc.numPages);
-      const arr = [];
+      const sizes = [];
       for (let i = 1; i <= doc.numPages; i++) {
         const pg = await doc.getPage(i);
         const vp = pg.getViewport({ scale: 1 });
-        arr.push({ width: vp.width, height: vp.height });
+        sizes[i - 1] = { width: vp.width, height: vp.height };
       }
-      pageSizesRef.current = arr;
+      pageSizesRef.current = sizes;
     };
     reader.readAsArrayBuffer(file);
   }
@@ -523,6 +577,7 @@ export default function Home() {
       },
       true
     );
+
     // Drag events.
     let isDragging = false;
     let offsetX = 0,
@@ -580,6 +635,7 @@ export default function Home() {
     });
     box.addEventListener("focus", () => {
       console.log("Box focused for id:", id);
+      setActiveAnnotationId(id);
       if (box.innerText === "Edit me!") {
         box.innerText = "";
         updateAnnotations(
@@ -682,8 +738,8 @@ export default function Home() {
       alert("Please load a PDF first!");
       return;
     }
-    if (placingAnnotation) return;
-    setPlacingAnnotation(true);
+    if (isPlacingAnnotation) return;
+    setIsPlacingAnnotation(true);
     const div = document.createElement("div");
     div.className = "editable-text";
     div.style.pointerEvents = "none";
@@ -720,7 +776,7 @@ export default function Home() {
           xRatio: x / rect.width,
           yRatio: y / rect.height,
           text: "Edit me!",
-          fontSize: fontSize,
+          fontSize: fontSize, // base font size for new annotation
           color: textColor,
           highlight: highlightColor,
           widthRatio: 0,
@@ -736,7 +792,7 @@ export default function Home() {
         document.removeEventListener("mousemove", onMouseMove);
         document.removeEventListener("click", onClick);
         div.remove();
-        setPlacingAnnotation(false);
+        setIsPlacingAnnotation(false);
       }
     };
     document.addEventListener("click", onClick);
@@ -908,14 +964,14 @@ export default function Home() {
         <label style={{ marginLeft: "1rem" }}>Color:</label>
         <input
           type="color"
-          value={textColor}
-          onChange={(e) => setTextColor(e.target.value)}
+          value={activeAnnotation ? activeAnnotation.color : textColor}
+          onChange={(e) => updateActiveAnnotation("color", e.target.value)}
         />
         <label style={{ marginLeft: "1rem" }}>Highlight:</label>
         <input
           type="color"
-          value={highlightColor}
-          onChange={(e) => setHighlightColor(e.target.value)}
+          value={activeAnnotation ? activeAnnotation.highlight : highlightColor}
+          onChange={(e) => updateActiveAnnotation("highlight", e.target.value)}
         />
         <label style={{ marginLeft: "1rem" }}>Text Size:</label>
         <input
@@ -923,12 +979,10 @@ export default function Home() {
           min={1}
           max={200}
           step={1}
-          value={fontSize}
-          onChange={(e) => {
-            let val = parseFloat(e.target.value) || 1;
-            if (val > 200) val = 200;
-            setFontSize(val);
-          }}
+          value={activeAnnotation ? activeAnnotation.fontSize : fontSize}
+          onChange={(e) =>
+            updateActiveAnnotation("fontSize", parseFloat(e.target.value) || 1)
+          }
           style={{ width: "60px" }}
         />
         <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
@@ -958,7 +1012,8 @@ export default function Home() {
               <div
                 className="settings-panel"
                 ref={settingsRef}
-                onMouseDown={(e) => e.stopPropagation()}
+                onMouseDown={stopPropagation}
+                onClick={stopPropagation}
               >
                 <label className="settings-item">
                   <span>Dark Mode</span>
@@ -1014,8 +1069,8 @@ export default function Home() {
           --bg-color: #fafafa;
           --text-color: #333;
           --toolbar-bg: rgba(255, 255, 255, 0.9);
-          --button-bg: rgba(220, 220, 220, 0.8);
-          --button-hover: rgba(200, 200, 200, 0.9);
+          --button-bg: rgba(240, 240, 240, 0.7);
+          --button-hover: rgba(220, 220, 220, 0.8);
         }
         body {
           margin: 0;
@@ -1030,8 +1085,8 @@ export default function Home() {
           --bg-color: #121212;
           --text-color: #ddd;
           --toolbar-bg: rgba(40, 40, 40, 0.9);
-          --button-bg: rgba(50, 50, 50, 0.8);
-          --button-hover: rgba(70, 70, 70, 0.9);
+          --button-bg: rgba(60, 60, 60, 0.7);
+          --button-hover: rgba(80, 80, 80, 0.8);
         }
         #toolbar {
           position: fixed;
