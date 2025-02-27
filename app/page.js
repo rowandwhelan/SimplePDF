@@ -12,6 +12,7 @@ function arrayBufferToBase64(buffer) {
   }
   return btoa(binary);
 }
+
 function base64ToArrayBuffer(base64) {
   const binaryString = atob(base64);
   const len = binaryString.length;
@@ -54,16 +55,18 @@ export default function Home() {
   // Unscaled page sizes
   const pageSizesRef = useRef([]);
 
-  // Annotations state and ref (with unique IDs)
+  // Annotations state & ref (each annotation gets a unique id)
   const [annotations, setAnnotations] = useState([]);
   const annotationsRef = useRef([]);
-  // A counter for unique IDs:
   const annotationIdCounter = useRef(0);
 
   const [placingAnnotation, setPlacingAnnotation] = useState(false);
   const [activeAnnotationId, setActiveAnnotationId] = useState(null);
 
   const pdfContainerRef = useRef(null);
+
+  // Store the current PDF's file name
+  const currentPdfName = useRef(null);
 
   // Zoom input & dropdown
   const [zoomValue, setZoomValue] = useState("100%");
@@ -82,122 +85,6 @@ export default function Home() {
     "300%",
     "400%",
   ];
-
-  // Near the top of your component:
-  const currentPdfName = useRef(null);
-
-  useEffect(() => {
-    // On mount, load the saved PDF name from localStorage, if present.
-    const savedName = localStorage.getItem("currentPdfName");
-    if (savedName) {
-      currentPdfName.current = savedName;
-    }
-  }, []);
-
-  // In your auto-save effect, also save the current PDF name:
-  useEffect(() => {
-    if (!saveProgress || !pdfBytes) return;
-    localStorage.setItem("pdfBase64", arrayBufferToBase64(pdfBytes));
-    localStorage.setItem("annotations", JSON.stringify(annotationsRef.current));
-    // Save the current PDF name as well
-    if (currentPdfName.current) {
-      localStorage.setItem("currentPdfName", currentPdfName.current);
-    }
-    console.log("Auto-saved data:", {
-      pdfBytes,
-      annotations: annotationsRef.current,
-      currentPdfName: currentPdfName.current,
-    });
-  }, [pdfBytes, annotations, saveProgress]);
-
-  // Modify handleFileChange to clear annotations only if a new PDF is loaded:
-  async function handleFileChange(e) {
-    const file = e.target.files[0];
-    if (!file || file.type !== "application/pdf") return;
-    console.log("Uploading new PDF:", file.name);
-    // Only clear annotations if the new file's name is different
-    if (currentPdfName.current !== file.name) {
-      updateAnnotations([]); // clear annotations for a new PDF
-      currentPdfName.current = file.name;
-    }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const bytes = new Uint8Array(reader.result);
-      setPdfBytes(bytes);
-      const doc = await window.pdfjsLib.getDocument(bytes).promise;
-      setPdfDoc(doc);
-      setPdfLoaded(true);
-      setNumPages(doc.numPages);
-      const arr = [];
-      for (let i = 1; i <= doc.numPages; i++) {
-        const pg = await doc.getPage(i);
-        const vp = pg.getViewport({ scale: 1 });
-        arr.push({ width: vp.width, height: vp.height });
-      }
-      pageSizesRef.current = arr;
-      setZoomValue("100%");
-      setZoomScale(1.0);
-      renderAllPages(1.0);
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
-  // In loadSavedPDF, load the saved currentPdfName as well:
-  function loadSavedPDF(b64, annJSON) {
-    let annArr = [];
-    try {
-      annArr = JSON.parse(annJSON);
-    } catch (e) {
-      console.log("Error parsing annotations:", e);
-    }
-    console.log("Loaded annotations (raw):", annArr);
-    // If any loaded annotation lacks an id, assign one.
-    annArr = annArr.map((a) => {
-      if (a.id === undefined || a.id === null) {
-        a.id = annotationIdCounter.current++;
-      } else {
-        // Ensure our counter is greater than any loaded id.
-        annotationIdCounter.current = Math.max(
-          annotationIdCounter.current,
-          a.id + 1
-        );
-      }
-      return a;
-    });
-    console.log("Loaded annotations (with ids):", annArr);
-    setAnnotations(annArr);
-    annotationsRef.current = annArr;
-    // Also load the saved PDF name
-    const savedName = localStorage.getItem("currentPdfName");
-    if (savedName) {
-      currentPdfName.current = savedName;
-    }
-    const ab = base64ToArrayBuffer(b64);
-    const bytes = new Uint8Array(ab);
-    setPdfBytes(bytes);
-    window.pdfjsLib
-      .getDocument(bytes)
-      .promise.then((doc) => {
-        console.log("PDF document loaded from localStorage");
-        setPdfDoc(doc);
-        setPdfLoaded(true);
-        setNumPages(doc.numPages);
-        const tasks = [];
-        for (let i = 1; i <= doc.numPages; i++) {
-          tasks.push(doc.getPage(i));
-        }
-        Promise.all(tasks).then((pages) => {
-          pageSizesRef.current = pages.map((p) => {
-            const vp = p.getViewport({ scale: 1 });
-            return { width: vp.width, height: vp.height };
-          });
-          setZoomValue("100%");
-          setZoomScale(1.0);
-          renderAllPages(1.0);
-        });
-      })
-      .catch((err) => console.log("Error loading PDF:", err));
-  }
 
   function parseZoomValue(str) {
     str = str.trim().toLowerCase();
@@ -223,10 +110,12 @@ export default function Home() {
     }
     return 1.0;
   }
+
   function formatZoomValue(scale) {
     const pct = Math.round(scale * 100);
     return pct + "%";
   }
+
   function parseZoomAndRender(str) {
     if (!pdfDoc) return;
     const sc = parseZoomValue(str);
@@ -235,15 +124,18 @@ export default function Home() {
     setZoomValue(formatZoomValue(sc));
     renderAllPages(sc);
   }
+
   function handlePickZoom(item) {
     console.log("Picked zoom item:", item);
     setShowZoomMenu(false);
     parseZoomAndRender(item);
   }
+
   function handleZoomInputChange(e) {
     console.log("Zoom input changed:", e.target.value);
     setZoomValue(e.target.value);
   }
+
   function handleZoomInputKey(e) {
     if (e.key === "Enter") {
       console.log("Zoom input Enter pressed:", zoomValue);
@@ -251,11 +143,13 @@ export default function Home() {
       setShowZoomMenu(false);
     }
   }
+
   function handleZoomInputBlur() {
     console.log("Zoom input blur:", zoomValue);
     parseZoomAndRender(zoomValue);
     setTimeout(() => setShowZoomMenu(false), 150);
   }
+
   function handleZoomInputFocus() {
     console.log("Zoom input focused");
     setShowZoomMenu(true);
@@ -275,11 +169,12 @@ export default function Home() {
       setDarkMode(true);
     }
   }, []);
+
   useEffect(() => {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Settings panel remains open until click outside
+  // Settings panel remains open until clicking outside
   const settingsRef = useRef(null);
   const gearRef = useRef(null);
   useEffect(() => {
@@ -308,7 +203,7 @@ export default function Home() {
     return () => document.removeEventListener("blur", globalBlurHandler, true);
   }, []);
 
-  // Global click to force blur if clicking outside an editable text box
+  // Global click: force blur if clicking outside an editable text box.
   useEffect(() => {
     function handleGlobalClick(e) {
       const active = document.activeElement;
@@ -328,49 +223,73 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleGlobalClick);
   }, []);
 
-  // Beforeunload: final save to localStorage
+  // Beforeunload: final save to localStorage (store PDF data and annotations)
   useEffect(() => {
     function handleBeforeUnload(e) {
       if (saveProgress && pdfBytes) {
-        localStorage.setItem("pdfBase64", arrayBufferToBase64(pdfBytes));
-        localStorage.setItem(
-          "annotations",
-          JSON.stringify(annotationsRef.current)
-        );
-        console.log("Before unload: final save executed");
+        const savedPDFsStr = localStorage.getItem("savedPDFs") || "{}";
+        let savedPDFs = {};
+        try {
+          savedPDFs = JSON.parse(savedPDFsStr);
+        } catch (e) {}
+        if (currentPdfName.current) {
+          savedPDFs[currentPdfName.current] = {
+            pdfBase64: arrayBufferToBase64(pdfBytes),
+            annotations: annotationsRef.current,
+          };
+          localStorage.setItem("savedPDFs", JSON.stringify(savedPDFs));
+          localStorage.setItem("currentPdfName", currentPdfName.current);
+        }
+        console.log("Before unload: final save executed", {
+          currentPdfName: currentPdfName.current,
+        });
       }
     }
     window.addEventListener("beforeunload", handleBeforeUnload);
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [pdfBytes, saveProgress]);
 
-  // Load saved PDF/annotations on mount
+  // On mount: if a current PDF is saved, load it automatically.
   useEffect(() => {
-    const sp = localStorage.getItem("saveProgress");
-    if (sp === "false") setSaveProgress(false);
-    const b64pdf = localStorage.getItem("pdfBase64");
-    const annJSON = localStorage.getItem("annotations");
-    if (b64pdf && annJSON && sp !== "false") {
-      console.log("Loading saved PDF and annotations from localStorage");
-      loadSavedPDF(b64pdf, annJSON);
-    }
+    setTimeout(() => {
+      const savedName = localStorage.getItem("currentPdfName");
+      const savedPDFsStr = localStorage.getItem("savedPDFs");
+      if (savedName && savedPDFsStr) {
+        currentPdfName.current = savedName;
+        console.log("Loading saved PDF and annotations for:", savedName);
+        loadSavedPDF();
+      }
+    }, 100);
   }, []);
 
-  function loadSavedPDF(b64, annJSON) {
-    let annArr = [];
-    try {
-      annArr = JSON.parse(annJSON);
-    } catch (e) {
-      console.log("Error parsing annotations:", e);
+  // Extra effect: when pdfLoaded and pdfDoc change, force a redraw so the PDF becomes visible.
+  useEffect(() => {
+    if (pdfLoaded && pdfDoc) {
+      console.log("PDF loaded; rendering all pages with zoomScale:", zoomScale);
+      renderAllPages(zoomScale);
     }
-    console.log("Loaded annotations (raw):", annArr);
-    // Ensure every loaded annotation has a unique id,
-    // and update the counter so that future annotations get a new id.
+  }, [pdfLoaded, pdfDoc, zoomScale]);
+
+  // loadSavedPDF: load current PDF data and annotations from the savedPDFs mapping.
+  function loadSavedPDF() {
+    const savedName = localStorage.getItem("currentPdfName");
+    if (!savedName) return;
+    const savedPDFsStr = localStorage.getItem("savedPDFs") || "{}";
+    let savedPDFs = {};
+    try {
+      savedPDFs = JSON.parse(savedPDFsStr);
+    } catch (e) {
+      console.log("Error parsing savedPDFs:", e);
+    }
+    const fileData = savedPDFs[savedName];
+    if (!fileData) return;
+    const { pdfBase64, annotations: savedAnnotations } = fileData;
+    let annArr = savedAnnotations || [];
+    // Ensure each annotation has a unique id and update counter.
     annArr = annArr.map((a) => {
       if (a.id === undefined || a.id === null) {
         a.id = annotationIdCounter.current++;
       } else {
-        // Make sure our counter is set higher than any loaded id.
         annotationIdCounter.current = Math.max(
           annotationIdCounter.current,
           a.id + 1
@@ -381,13 +300,13 @@ export default function Home() {
     console.log("Loaded annotations (with ids):", annArr);
     setAnnotations(annArr);
     annotationsRef.current = annArr;
-    const ab = base64ToArrayBuffer(b64);
+    const ab = base64ToArrayBuffer(pdfBase64);
     const bytes = new Uint8Array(ab);
     setPdfBytes(bytes);
     window.pdfjsLib
       .getDocument(bytes)
       .promise.then((doc) => {
-        console.log("PDF document loaded from localStorage");
+        console.log("PDF document loaded from savedPDFs");
         setPdfDoc(doc);
         setPdfLoaded(true);
         setNumPages(doc.numPages);
@@ -402,39 +321,50 @@ export default function Home() {
           });
           setZoomValue("100%");
           setZoomScale(1.0);
-          renderAllPages(1.0);
+          // Force a redraw after a slight delay.
+          setTimeout(() => renderAllPages(1.0), 50);
         });
       })
       .catch((err) => console.log("Error loading PDF:", err));
   }
 
-  // Auto-save to localStorage whenever pdfBytes or annotations change
+  // Auto-save: update savedPDFs mapping whenever pdfBytes or annotations change.
   useEffect(() => {
     if (!saveProgress || !pdfBytes) return;
-    localStorage.setItem("pdfBase64", arrayBufferToBase64(pdfBytes));
-    localStorage.setItem("annotations", JSON.stringify(annotationsRef.current));
+    const savedPDFsStr = localStorage.getItem("savedPDFs") || "{}";
+    let savedPDFs = {};
+    try {
+      savedPDFs = JSON.parse(savedPDFsStr);
+    } catch (e) {}
+    if (currentPdfName.current) {
+      savedPDFs[currentPdfName.current] = {
+        pdfBase64: arrayBufferToBase64(pdfBytes),
+        annotations: annotationsRef.current,
+      };
+      localStorage.setItem("savedPDFs", JSON.stringify(savedPDFs));
+      localStorage.setItem("currentPdfName", currentPdfName.current);
+    }
     console.log("Auto-saved data:", {
       pdfBytes,
       annotations: annotationsRef.current,
+      currentPdfName: currentPdfName.current,
     });
   }, [pdfBytes, annotations, saveProgress]);
 
-  // Helper: update annotations and the ref
+  // Helper: update annotations state and ref.
   function updateAnnotations(newAnnotations) {
     setAnnotations(newAnnotations);
     annotationsRef.current = newAnnotations;
   }
 
-  // Handle new PDF upload (clearing old annotations)
+  // handleFileChange: on file upload, always treat the file as new.
   async function handleFileChange(e) {
     const file = e.target.files[0];
     if (!file || file.type !== "application/pdf") return;
     console.log("Uploading new PDF:", file.name);
-    // Only clear annotations if the new file is different from the currently loaded one
-    if (currentPdfName.current !== file.name) {
-      updateAnnotations([]); // clear annotations only for a new PDF
-      currentPdfName.current = file.name;
-    }
+    // Always override current PDF on upload.
+    currentPdfName.current = file.name;
+    updateAnnotations([]); // clear annotations for a new file
     const reader = new FileReader();
     reader.onload = async () => {
       const bytes = new Uint8Array(reader.result);
@@ -457,7 +387,7 @@ export default function Home() {
     reader.readAsArrayBuffer(file);
   }
 
-  // Render PDF pages continuously
+  // Render PDF pages
   async function renderAllPages(scale) {
     if (!pdfDoc) return;
     const container = pdfContainerRef.current;
@@ -508,7 +438,7 @@ export default function Home() {
     });
   }
 
-  // Global click to force blur if clicking outside an editable text box
+  // Global click: force blur if clicking outside an editable text box.
   useEffect(() => {
     function handleGlobalClick(e) {
       const active = document.activeElement;
@@ -528,7 +458,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleGlobalClick);
   }, []);
 
-  // Redraw a single box on blur (to restore resizer)
+  // Redraw a single box on blur to restore the resizer.
   function redrawSingleBox(id, pageEl, oldBox) {
     console.log("Redrawing box for annotation id:", id);
     if (oldBox.parentNode) {
@@ -549,6 +479,7 @@ export default function Home() {
     textLayer.appendChild(newBox);
   }
 
+  // Create an annotation box with event handlers.
   function createAnnotationBox(ann, id, pageEl) {
     console.log("Creating annotation box for id:", id);
     const ratio =
@@ -573,7 +504,8 @@ export default function Home() {
     if (ann.heightRatio) {
       box.style.height = ann.heightRatio * pageEl.clientHeight + "px";
     }
-    // Attach blur and focusout listeners (capturing phase) with a debounce
+
+    // Attach blur/focusout listeners with debounce.
     const scheduleRedraw = () => {
       if (!box._redrawTimer) {
         box._redrawTimer = setTimeout(() => {
@@ -599,7 +531,7 @@ export default function Home() {
       true
     );
 
-    // Drag events
+    // Drag events.
     let isDragging = false;
     let offsetX = 0,
       offsetY = 0;
@@ -655,7 +587,7 @@ export default function Home() {
       }
     });
 
-    // On focus: remove placeholder if needed
+    // On focus: remove placeholder text if present.
     box.addEventListener("focus", () => {
       console.log("Box focused for id:", id);
       if (box.innerText === "Edit me!") {
@@ -671,14 +603,15 @@ export default function Home() {
       }
     });
 
-    // Paste event
+    // Paste event.
     box.addEventListener("paste", (e) => {
       if (!autoFormatPaste) return;
       e.preventDefault();
       const txt = e.clipboardData.getData("text/plain");
       document.execCommand("insertText", false, txt);
     });
-    // Input event to update annotation text
+
+    // Input event to update annotation text.
     box.addEventListener("input", () => {
       console.log("Input event in box id:", id, "new text:", box.innerText);
       updateAnnotations(
@@ -690,7 +623,8 @@ export default function Home() {
         })
       );
     });
-    // Keydown: if box becomes empty, remove it
+
+    // Keydown: if box becomes empty, remove it.
     box.addEventListener("keydown", (e) => {
       if (
         (e.key === "Backspace" || e.key === "Delete") &&
@@ -703,7 +637,7 @@ export default function Home() {
       }
     });
 
-    // Resizer element
+    // Resizer element.
     const resizer = document.createElement("div");
     resizer.className = "resizer";
     box.appendChild(resizer);
@@ -821,7 +755,6 @@ export default function Home() {
         };
         updateAnnotations([...annotationsRef.current, newAnn]);
         console.log("New annotation added:", newAnn);
-        const idx = newAnn.id;
         const textLayer = pageEl.querySelector(".text-layer");
         if (textLayer) {
           const boxNode = createAnnotationBox(newAnn, newAnn.id, pageEl);
@@ -844,6 +777,7 @@ export default function Home() {
     }
     await doDownloadPDF();
   }
+
   async function doDownloadPDF() {
     const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
     const pdfDocLib = await PDFDocument.load(pdfBytes);
