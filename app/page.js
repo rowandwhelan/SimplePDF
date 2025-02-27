@@ -52,10 +52,10 @@ export default function Home() {
   const [pdfBytes, setPdfBytes] = useState(null);
   const [numPages, setNumPages] = useState(1);
 
-  // Unscaled (original) page sizes
+  // Store original (unscaled) page sizes
   const pageSizesRef = useRef([]);
 
-  // Annotations state & ref
+  // Annotations
   const [annotations, setAnnotations] = useState([]);
   const annotationsRef = useRef([]);
   const annotationIdCounter = useRef(0);
@@ -97,10 +97,8 @@ export default function Home() {
     }
     if (str === "page width") {
       if (!pageSizesRef.current.length) return 1.0;
-      // Use the pdf container width if available
-      const containerWidth = pdfContainerRef.current
-        ? pdfContainerRef.current.clientWidth
-        : window.innerWidth;
+      // Use the full viewport width
+      const containerWidth = window.innerWidth;
       const { width } = pageSizesRef.current[0];
       return Math.max(0.1, containerWidth / width);
     }
@@ -163,6 +161,14 @@ export default function Home() {
   const [textColor, setTextColor] = useState("#000000");
   const [highlightColor, setHighlightColor] = useState("#ffff00");
 
+  // On mount, load saveProgress setting
+  useEffect(() => {
+    const sp = localStorage.getItem("saveProgress");
+    if (sp !== null) {
+      setSaveProgress(sp === "true");
+    }
+  }, []);
+
   // Dark mode
   useEffect(() => {
     if (
@@ -177,7 +183,7 @@ export default function Home() {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Settings panel behavior: remains open when clicking inside.
+  // Settings panel: keep open on interaction.
   const settingsRef = useRef(null);
   const gearRef = useRef(null);
   useEffect(() => {
@@ -264,7 +270,7 @@ export default function Home() {
     }, 100);
   }, []);
 
-  // When pdfDoc or zoomScale changes, re-render pages.
+  // Re-render pages when pdfDoc or zoomScale changes.
   useEffect(() => {
     if (pdfDoc) {
       if (pdfContainerRef.current) {
@@ -354,7 +360,7 @@ export default function Home() {
     if (pdfContainerRef.current) {
       pdfContainerRef.current.innerHTML = "";
     }
-    // Reset zoom to 100% for new document.
+    // Reset zoom to 100%
     setZoomValue("100%");
     setZoomScale(1.0);
 
@@ -404,7 +410,6 @@ export default function Home() {
 
       const pageDiv = document.createElement("div");
       pageDiv.className = "pdf-page";
-      // Center pages by using flex layout in the container (see CSS below)
       pageDiv.style.width = width + "px";
       pageDiv.style.height = height + "px";
       pageDiv.appendChild(canvas);
@@ -457,8 +462,7 @@ export default function Home() {
     textLayer.appendChild(newBox);
   }
 
-  // Create annotation box. Now, the final font size is computed as base fontSize * zoomScale,
-  // so that the text remains constant relative to the document.
+  // Create annotation box – text size now scales with the zoom so the text remains constant relative to the document.
   function createAnnotationBox(ann, id, pageEl) {
     console.log("Creating annotation box for id:", id);
     const finalFS = ann.fontSize * zoomScale;
@@ -674,7 +678,6 @@ export default function Home() {
     if (placingAnnotation) return;
     setPlacingAnnotation(true);
 
-    // Create a floating placeholder that scales with the current zoom.
     const div = document.createElement("div");
     div.className = "editable-text";
     div.style.pointerEvents = "none";
@@ -686,6 +689,7 @@ export default function Home() {
     div.style.color = textColor;
     div.style.overflow = "hidden";
     div.innerText = "Edit me!";
+    // Use the chosen fontSize scaled by zoomScale
     div.style.fontSize = fontSize * zoomScale + "px";
     document.body.appendChild(div);
     console.log("Floating text box created for placement");
@@ -711,7 +715,7 @@ export default function Home() {
           xRatio: x / rect.width,
           yRatio: y / rect.height,
           text: "Edit me!",
-          fontSize: fontSize, // store base font size
+          fontSize: fontSize, // base size
           color: textColor,
           highlight: highlightColor,
           widthRatio: 0,
@@ -745,7 +749,6 @@ export default function Home() {
     const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
     const pdfDocLib = await PDFDocument.load(pdfBytes);
     const font = await pdfDocLib.embedFont(StandardFonts.Helvetica);
-
     function breakLongWord(word, font, fs, maxW) {
       const out = [];
       let cur = "";
@@ -798,7 +801,6 @@ export default function Home() {
       const b = (num & 255) / 255;
       return rgb(r, g, b);
     }
-
     const pages = pdfDocLib.getPages();
     for (let ann of annotationsRef.current) {
       if (!pages[ann.pageIndex]) continue;
@@ -938,7 +940,6 @@ export default function Home() {
             ref={gearRef}
             title="Settings"
           >
-            {/* External gear icon */}
             <img
               src="https://img.icons8.com/material-rounded/36/000000/settings.png"
               alt="Settings"
@@ -1004,8 +1005,8 @@ export default function Home() {
           --bg-color: #fafafa;
           --text-color: #333;
           --toolbar-bg: rgba(255, 255, 255, 0.9);
-          --button-bg: rgba(255, 255, 255, 0.15);
-          --button-hover: rgba(255, 255, 255, 0.25);
+          --button-bg: rgba(255, 255, 255, 0.2);
+          --button-hover: rgba(255, 255, 255, 0.3);
         }
         body {
           margin: 0;
@@ -1020,8 +1021,8 @@ export default function Home() {
           --bg-color: #121212;
           --text-color: #ddd;
           --toolbar-bg: rgba(40, 40, 40, 0.9);
-          --button-bg: rgba(0, 0, 0, 0.25);
-          --button-hover: rgba(0, 0, 0, 0.35);
+          --button-bg: rgba(0, 0, 0, 0.3);
+          --button-hover: rgba(0, 0, 0, 0.4);
         }
         #toolbar {
           position: fixed;
@@ -1050,12 +1051,13 @@ export default function Home() {
           background: #2c2c2c;
           color: #ddd;
         }
+        /* Make container use full viewport width and allow horizontal scroll when needed */
         #pdf-container {
           display: flex;
           flex-direction: column;
           align-items: center;
-          margin: 0 auto;
-          max-width: 1000px;
+          width: 100vw;
+          overflow-x: auto;
           padding-bottom: 100px;
         }
         .pdf-page {
