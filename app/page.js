@@ -52,10 +52,10 @@ export default function Home() {
   const [pdfBytes, setPdfBytes] = useState(null);
   const [numPages, setNumPages] = useState(1);
 
-  // Store original page sizes
+  // Unscaled (original) page sizes
   const pageSizesRef = useRef([]);
 
-  // Annotations state
+  // Annotations state & ref
   const [annotations, setAnnotations] = useState([]);
   const annotationsRef = useRef([]);
   const annotationIdCounter = useRef(0);
@@ -97,9 +97,12 @@ export default function Home() {
     }
     if (str === "page width") {
       if (!pageSizesRef.current.length) return 1.0;
-      const offset = 100;
+      // Use the pdf container width if available
+      const containerWidth = pdfContainerRef.current
+        ? pdfContainerRef.current.clientWidth
+        : window.innerWidth;
       const { width } = pageSizesRef.current[0];
-      return Math.max(0.1, (window.innerWidth - offset) / width);
+      return Math.max(0.1, containerWidth / width);
     }
     if (str.endsWith("%")) {
       let val = parseFloat(str);
@@ -160,7 +163,7 @@ export default function Home() {
   const [textColor, setTextColor] = useState("#000000");
   const [highlightColor, setHighlightColor] = useState("#ffff00");
 
-  // Dark mode setup
+  // Dark mode
   useEffect(() => {
     if (
       window.matchMedia &&
@@ -174,7 +177,7 @@ export default function Home() {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Settings panel stays open until clicking outside.
+  // Settings panel behavior: remains open when clicking inside.
   const settingsRef = useRef(null);
   const gearRef = useRef(null);
   useEffect(() => {
@@ -343,7 +346,7 @@ export default function Home() {
     annotationsRef.current = newAnnotations;
   }
 
-  // New file upload
+  // New file upload handler.
   async function handleFileChange(e) {
     const file = e.target.files[0];
     if (!file || file.type !== "application/pdf") return;
@@ -351,7 +354,7 @@ export default function Home() {
     if (pdfContainerRef.current) {
       pdfContainerRef.current.innerHTML = "";
     }
-    // Reset zoom to 100%
+    // Reset zoom to 100% for new document.
     setZoomValue("100%");
     setZoomScale(1.0);
 
@@ -368,7 +371,6 @@ export default function Home() {
       setPdfDoc(doc);
       setPdfLoaded(true);
       setNumPages(doc.numPages);
-
       const arr = [];
       for (let i = 1; i <= doc.numPages; i++) {
         const pg = await doc.getPage(i);
@@ -402,6 +404,7 @@ export default function Home() {
 
       const pageDiv = document.createElement("div");
       pageDiv.className = "pdf-page";
+      // Center pages by using flex layout in the container (see CSS below)
       pageDiv.style.width = width + "px";
       pageDiv.style.height = height + "px";
       pageDiv.appendChild(canvas);
@@ -454,10 +457,10 @@ export default function Home() {
     textLayer.appendChild(newBox);
   }
 
-  // IMPORTANT: Text size now scales with the PDF zoom.
+  // Create annotation box. Now, the final font size is computed as base fontSize * zoomScale,
+  // so that the text remains constant relative to the document.
   function createAnnotationBox(ann, id, pageEl) {
     console.log("Creating annotation box for id:", id);
-    // Compute final font size as base size times the current zoomScale.
     const finalFS = ann.fontSize * zoomScale;
     const xPx = ann.xRatio * pageEl.clientWidth;
     const yPx = ann.yRatio * pageEl.clientHeight;
@@ -671,6 +674,7 @@ export default function Home() {
     if (placingAnnotation) return;
     setPlacingAnnotation(true);
 
+    // Create a floating placeholder that scales with the current zoom.
     const div = document.createElement("div");
     div.className = "editable-text";
     div.style.pointerEvents = "none";
@@ -682,9 +686,7 @@ export default function Home() {
     div.style.color = textColor;
     div.style.overflow = "hidden";
     div.innerText = "Edit me!";
-    // Use the chosen fontSize scaled by current zoom
     div.style.fontSize = fontSize * zoomScale + "px";
-
     document.body.appendChild(div);
     console.log("Floating text box created for placement");
 
@@ -693,7 +695,6 @@ export default function Home() {
       div.style.top = e.clientY + "px";
     };
     document.addEventListener("mousemove", onMouseMove);
-
     const onClick = (e) => {
       const pageEl = e.target.closest(".pdf-page");
       if (pageEl) {
@@ -855,7 +856,7 @@ export default function Home() {
         <title>Ultramodern PDF Editor</title>
       </Head>
       <div id="toolbar">
-        <label htmlFor="file-input" className="button primary">
+        <label htmlFor="file-input" className="button">
           Upload PDF
         </label>
         <input
@@ -890,7 +891,7 @@ export default function Home() {
             </div>
           )}
         </div>
-        <button onClick={handleAddTextBox} className="button secondary">
+        <button onClick={handleAddTextBox} className="button">
           + Text
         </button>
         <label style={{ marginLeft: "1rem" }}>Color:</label>
@@ -920,11 +921,11 @@ export default function Home() {
           style={{ width: "60px" }}
         />
         <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
-          <button onClick={handleDownload} className="button primary">
+          <button onClick={handleDownload} className="button">
             Download PDF
           </button>
           <button
-            className="button secondary"
+            className="button"
             onClick={() => setShowSettings((p) => !p)}
             style={{
               position: "relative",
@@ -937,33 +938,36 @@ export default function Home() {
             ref={gearRef}
             title="Settings"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              style={{ width: "36px", height: "36px", fill: "currentColor" }}
-              viewBox="0 0 16 16"
-            >
-              <path d="M8 4a.5.5 0 0 0-.5.5v.55a2.5.5.5 0 0 0-1.03.38l-.5-.5a.5.5 0 1 0-.71.71l.5.5A2.5.5.5 0 0 0 5.38 8H4.5a.5.5 0 0 0 0 1h.88a2.5.2.5.5 0 0 0 .38 1.03l-.5.5a.5.5 0 1 0 .71.71l.5-.5c.32.18.67.31 1.03.38v.55a.5.5 0 0 0 1 0v-.55c.36-.07.71-.2 1.03-.38l.5.5a.5.5 0 1 0 .71-.71l-.5-.5A2.5.5.5 0 0 0 11.45 9h.55a.5.5 0 0 0 0-1h-.55a2.5.2.5.5 0 0 0-.38-1.03l.5-.5a.5.5 0 1 0-.71-.71l-.5.5A2.5.5.5 0 0 0 9 5.55v-.55A.5.5 0 0 0 8 4zm0 3a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" />
-            </svg>
+            {/* External gear icon */}
+            <img
+              src="https://img.icons8.com/material-rounded/36/000000/settings.png"
+              alt="Settings"
+              style={{ width: "36px", height: "36px" }}
+            />
             {showSettings && (
-              <div className="settings-panel" ref={settingsRef}>
-                <div className="settings-item">
-                  <label>Dark Mode</label>
+              <div
+                className="settings-panel"
+                ref={settingsRef}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <label className="settings-item">
+                  <span>Dark Mode</span>
                   <input
                     type="checkbox"
                     checked={darkMode}
                     onChange={(e) => setDarkMode(e.target.checked)}
                   />
-                </div>
-                <div className="settings-item">
-                  <label>Auto-format Paste</label>
+                </label>
+                <label className="settings-item">
+                  <span>Auto-format Paste</span>
                   <input
                     type="checkbox"
                     checked={autoFormatPaste}
                     onChange={(e) => setAutoFormatPaste(e.target.checked)}
                   />
-                </div>
-                <div className="settings-item">
-                  <label>Save Progress</label>
+                </label>
+                <label className="settings-item">
+                  <span>Save Progress</span>
                   <input
                     type="checkbox"
                     checked={saveProgress}
@@ -973,7 +977,7 @@ export default function Home() {
                       localStorage.setItem("saveProgress", String(val));
                     }}
                   />
-                </div>
+                </label>
               </div>
             )}
           </button>
@@ -1000,8 +1004,8 @@ export default function Home() {
           --bg-color: #fafafa;
           --text-color: #333;
           --toolbar-bg: rgba(255, 255, 255, 0.9);
-          --primary-button-bg: linear-gradient(135deg, #6e8efb, #a777e3);
-          --secondary-button-bg: #e6e6e6;
+          --button-bg: rgba(255, 255, 255, 0.15);
+          --button-hover: rgba(255, 255, 255, 0.25);
         }
         body {
           margin: 0;
@@ -1016,8 +1020,8 @@ export default function Home() {
           --bg-color: #121212;
           --text-color: #ddd;
           --toolbar-bg: rgba(40, 40, 40, 0.9);
-          --primary-button-bg: linear-gradient(135deg, #444, #666);
-          --secondary-button-bg: #555;
+          --button-bg: rgba(0, 0, 0, 0.25);
+          --button-hover: rgba(0, 0, 0, 0.35);
         }
         #toolbar {
           position: fixed;
@@ -1047,7 +1051,9 @@ export default function Home() {
           color: #ddd;
         }
         #pdf-container {
-          display: block;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
           margin: 0 auto;
           max-width: 1000px;
           padding-bottom: 100px;
@@ -1095,28 +1101,21 @@ export default function Home() {
           pointer-events: all;
         }
         .button {
+          background: var(--button-bg);
+          border: none;
+          color: var(--text-color);
+          padding: 8px 16px;
+          border-radius: 8px;
+          font-size: 14px;
+          cursor: pointer;
+          backdrop-filter: blur(5px);
+          transition: background 0.2s ease;
           display: inline-flex;
           align-items: center;
-          border: none;
-          padding: 6px 12px;
-          border-radius: 6px;
-          cursor: pointer;
-          font-size: 14px;
-          color: #fff;
-          transition: filter 0.2s ease;
-        }
-        .button.primary {
-          background: var(--primary-button-bg);
-        }
-        .button.secondary {
-          background: var(--secondary-button-bg);
-          color: #333;
-        }
-        body.dark .button.secondary {
-          color: #ddd;
+          justify-content: center;
         }
         .button:hover {
-          filter: brightness(0.9);
+          background: var(--button-hover);
         }
         .settings-panel {
           position: absolute;
@@ -1135,6 +1134,10 @@ export default function Home() {
           align-items: center;
           justify-content: space-between;
           margin-bottom: 8px;
+          cursor: pointer;
+        }
+        .settings-item span {
+          flex-grow: 1;
         }
         .zoom-input {
           padding: 4px;
