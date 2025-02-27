@@ -41,6 +41,12 @@ function hexToRgba(hex, alpha = 1.0) {
 }
 
 export default function Home() {
+  // Helper: prevent event propagation.
+  const stopPropagation = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  };
+
   // Global states
   const [darkMode, setDarkMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -55,7 +61,7 @@ export default function Home() {
   // Store original (unscaled) page sizes
   const pageSizesRef = useRef([]);
 
-  // Annotations
+  // Annotations state
   const [annotations, setAnnotations] = useState([]);
   const annotationsRef = useRef([]);
   const annotationIdCounter = useRef(0);
@@ -93,14 +99,19 @@ export default function Home() {
       if (!pageSizesRef.current.length) return 1.0;
       const offset = 200;
       const { height } = pageSizesRef.current[0];
-      return Math.max(0.1, (window.innerHeight - offset) / height);
+      const scale = Math.max(0.1, (window.innerHeight - offset) / height);
+      console.log("Page Fit scale computed:", scale);
+      return scale;
     }
     if (str === "page width") {
       if (!pageSizesRef.current.length) return 1.0;
-      // Use the full viewport width
-      const containerWidth = window.innerWidth;
+      const containerWidth = pdfContainerRef.current
+        ? pdfContainerRef.current.clientWidth
+        : window.innerWidth;
       const { width } = pageSizesRef.current[0];
-      return Math.max(0.1, containerWidth / width);
+      const scale = Math.max(0.1, containerWidth / width);
+      console.log("Page Width scale computed:", scale);
+      return scale;
     }
     if (str.endsWith("%")) {
       let val = parseFloat(str);
@@ -161,13 +172,22 @@ export default function Home() {
   const [textColor, setTextColor] = useState("#000000");
   const [highlightColor, setHighlightColor] = useState("#ffff00");
 
-  // On mount, load saveProgress setting
+  // On mount, load saved "saveProgress" setting.
   useEffect(() => {
     const sp = localStorage.getItem("saveProgress");
     if (sp !== null) {
       setSaveProgress(sp === "true");
     }
   }, []);
+
+  // If saveProgress is off, clear stored data.
+  useEffect(() => {
+    if (!saveProgress) {
+      localStorage.removeItem("savedPDFs");
+      localStorage.removeItem("currentPdfName");
+      console.log("Save progress toggled off; cleared saved data.");
+    }
+  }, [saveProgress]);
 
   // Dark mode
   useEffect(() => {
@@ -183,7 +203,7 @@ export default function Home() {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Settings panel: keep open on interaction.
+  // Settings panel: remain open when clicking inside.
   const settingsRef = useRef(null);
   const gearRef = useRef(null);
   useEffect(() => {
@@ -270,7 +290,7 @@ export default function Home() {
     }, 100);
   }, []);
 
-  // Re-render pages when pdfDoc or zoomScale changes.
+  // When pdfDoc or zoomScale changes, re-render pages.
   useEffect(() => {
     if (pdfDoc) {
       if (pdfContainerRef.current) {
@@ -363,12 +383,10 @@ export default function Home() {
     // Reset zoom to 100%
     setZoomValue("100%");
     setZoomScale(1.0);
-
     setPdfDoc(null);
     setPdfLoaded(false);
     updateAnnotations([]);
     currentPdfName.current = file.name;
-
     const reader = new FileReader();
     reader.onload = async () => {
       const bytes = new Uint8Array(reader.result);
@@ -399,7 +417,6 @@ export default function Home() {
       const vp = page.getViewport({ scale });
       const width = vp.width;
       const height = vp.height;
-
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
       canvas.style.width = width + "px";
@@ -407,16 +424,13 @@ export default function Home() {
       canvas.width = Math.floor(width * dpr);
       canvas.height = Math.floor(height * dpr);
       ctx.scale(dpr, dpr);
-
       const pageDiv = document.createElement("div");
       pageDiv.className = "pdf-page";
       pageDiv.style.width = width + "px";
       pageDiv.style.height = height + "px";
       pageDiv.appendChild(canvas);
       container.appendChild(pageDiv);
-
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
-
       const textLayer = document.createElement("div");
       textLayer.className = "text-layer";
       pageDiv.appendChild(textLayer);
@@ -462,7 +476,7 @@ export default function Home() {
     textLayer.appendChild(newBox);
   }
 
-  // Create annotation box – text size now scales with the zoom so the text remains constant relative to the document.
+  // Create annotation box.
   function createAnnotationBox(ann, id, pageEl) {
     console.log("Creating annotation box for id:", id);
     const finalFS = ann.fontSize * zoomScale;
@@ -485,7 +499,6 @@ export default function Home() {
     if (ann.heightRatio) {
       box.style.height = ann.heightRatio * pageEl.clientHeight + "px";
     }
-
     const scheduleRedraw = () => {
       if (!box._redrawTimer) {
         box._redrawTimer = setTimeout(() => {
@@ -510,7 +523,6 @@ export default function Home() {
       },
       true
     );
-
     // Drag events.
     let isDragging = false;
     let offsetX = 0,
@@ -566,7 +578,6 @@ export default function Home() {
         console.log("Ended dragging box id:", id);
       }
     });
-
     box.addEventListener("focus", () => {
       console.log("Box focused for id:", id);
       if (box.innerText === "Edit me!") {
@@ -581,14 +592,12 @@ export default function Home() {
         );
       }
     });
-
     box.addEventListener("paste", (e) => {
       if (!autoFormatPaste) return;
       e.preventDefault();
       const txt = e.clipboardData.getData("text/plain");
       document.execCommand("insertText", false, txt);
     });
-
     box.addEventListener("input", () => {
       console.log("Input event in box id:", id, "new text:", box.innerText);
       updateAnnotations(
@@ -600,7 +609,6 @@ export default function Home() {
         })
       );
     });
-
     box.addEventListener("keydown", (e) => {
       if (
         (e.key === "Backspace" || e.key === "Delete") &&
@@ -612,7 +620,6 @@ export default function Home() {
         box.remove();
       }
     });
-
     // Resizer element.
     const resizer = document.createElement("div");
     resizer.className = "resizer";
@@ -677,7 +684,6 @@ export default function Home() {
     }
     if (placingAnnotation) return;
     setPlacingAnnotation(true);
-
     const div = document.createElement("div");
     div.className = "editable-text";
     div.style.pointerEvents = "none";
@@ -689,11 +695,10 @@ export default function Home() {
     div.style.color = textColor;
     div.style.overflow = "hidden";
     div.innerText = "Edit me!";
-    // Use the chosen fontSize scaled by zoomScale
+    // Floating placeholder uses base font size scaled by zoomScale.
     div.style.fontSize = fontSize * zoomScale + "px";
     document.body.appendChild(div);
     console.log("Floating text box created for placement");
-
     const onMouseMove = (e) => {
       div.style.left = e.clientX + "px";
       div.style.top = e.clientY + "px";
@@ -715,7 +720,7 @@ export default function Home() {
           xRatio: x / rect.width,
           yRatio: y / rect.height,
           text: "Edit me!",
-          fontSize: fontSize, // base size
+          fontSize: fontSize,
           color: textColor,
           highlight: highlightColor,
           widthRatio: 0,
@@ -858,7 +863,11 @@ export default function Home() {
         <title>Ultramodern PDF Editor</title>
       </Head>
       <div id="toolbar">
-        <label htmlFor="file-input" className="button">
+        <label
+          htmlFor="file-input"
+          className="button"
+          onMouseDown={stopPropagation}
+        >
           Upload PDF
         </label>
         <input
@@ -949,7 +958,7 @@ export default function Home() {
               <div
                 className="settings-panel"
                 ref={settingsRef}
-                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
               >
                 <label className="settings-item">
                   <span>Dark Mode</span>
@@ -1005,8 +1014,8 @@ export default function Home() {
           --bg-color: #fafafa;
           --text-color: #333;
           --toolbar-bg: rgba(255, 255, 255, 0.9);
-          --button-bg: rgba(255, 255, 255, 0.2);
-          --button-hover: rgba(255, 255, 255, 0.3);
+          --button-bg: rgba(220, 220, 220, 0.8);
+          --button-hover: rgba(200, 200, 200, 0.9);
         }
         body {
           margin: 0;
@@ -1021,8 +1030,8 @@ export default function Home() {
           --bg-color: #121212;
           --text-color: #ddd;
           --toolbar-bg: rgba(40, 40, 40, 0.9);
-          --button-bg: rgba(0, 0, 0, 0.3);
-          --button-hover: rgba(0, 0, 0, 0.4);
+          --button-bg: rgba(50, 50, 50, 0.8);
+          --button-hover: rgba(70, 70, 70, 0.9);
         }
         #toolbar {
           position: fixed;
@@ -1051,7 +1060,7 @@ export default function Home() {
           background: #2c2c2c;
           color: #ddd;
         }
-        /* Make container use full viewport width and allow horizontal scroll when needed */
+        /* PDF container uses full viewport width and centers pages */
         #pdf-container {
           display: flex;
           flex-direction: column;
