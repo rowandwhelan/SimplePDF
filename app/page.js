@@ -52,7 +52,7 @@ export default function Home() {
   const [pdfBytes, setPdfBytes] = useState(null);
   const [numPages, setNumPages] = useState(1);
 
-  // Unscaled page sizes
+  // Unscaled page sizes for each page (in original scale)
   const pageSizesRef = useRef([]);
 
   // Annotations state & ref (each annotation gets a unique id)
@@ -68,7 +68,7 @@ export default function Home() {
   // Store the current PDF's file name
   const currentPdfName = useRef(null);
 
-  // Zoom input & dropdown
+  // Zoom state
   const [zoomValue, setZoomValue] = useState("100%");
   const [zoomScale, setZoomScale] = useState(1.0);
   const [showZoomMenu, setShowZoomMenu] = useState(false);
@@ -160,7 +160,7 @@ export default function Home() {
   const [textColor, setTextColor] = useState("#000000");
   const [highlightColor, setHighlightColor] = useState("#ffff00");
 
-  // Dark mode setup
+  // Dark mode
   useEffect(() => {
     if (
       window.matchMedia &&
@@ -174,7 +174,7 @@ export default function Home() {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Settings panel remains open until clicking outside
+  // Settings panel stays open until clicking outside.
   const settingsRef = useRef(null);
   const gearRef = useRef(null);
   useEffect(() => {
@@ -194,7 +194,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [showSettings]);
 
-  // Global blur listener (capturing phase)
+  // Global blur and click listeners.
   useEffect(() => {
     function globalBlurHandler(e) {
       console.log("Global blur event fired on:", e.target);
@@ -203,7 +203,6 @@ export default function Home() {
     return () => document.removeEventListener("blur", globalBlurHandler, true);
   }, []);
 
-  // Global click: force blur if clicking outside an editable text box.
   useEffect(() => {
     function handleGlobalClick(e) {
       const active = document.activeElement;
@@ -223,7 +222,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleGlobalClick);
   }, []);
 
-  // Beforeunload: final save to localStorage (store PDF data and annotations)
+  // Save current PDF & annotations before unload.
   useEffect(() => {
     function handleBeforeUnload(e) {
       if (saveProgress && pdfBytes) {
@@ -249,7 +248,7 @@ export default function Home() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [pdfBytes, saveProgress]);
 
-  // On mount: if a current PDF is saved, load it automatically.
+  // On mount: if a saved PDF exists, load it.
   useEffect(() => {
     setTimeout(() => {
       const savedName = localStorage.getItem("currentPdfName");
@@ -262,15 +261,17 @@ export default function Home() {
     }, 100);
   }, []);
 
-  // Extra effect: when pdfLoaded and pdfDoc change, force a redraw so the PDF becomes visible.
+  // When pdfDoc (or zoomScale) changes, clear and re-render pages.
   useEffect(() => {
-    if (pdfLoaded && pdfDoc) {
-      console.log("PDF loaded; rendering all pages with zoomScale:", zoomScale);
+    if (pdfDoc) {
+      if (pdfContainerRef.current) {
+        pdfContainerRef.current.innerHTML = "";
+      }
       renderAllPages(zoomScale);
     }
-  }, [pdfLoaded, pdfDoc, zoomScale]);
+  }, [pdfDoc, zoomScale]);
 
-  // loadSavedPDF: load current PDF data and annotations from the savedPDFs mapping.
+  // loadSavedPDF: load PDF data and annotations from localStorage.
   function loadSavedPDF() {
     const savedName = localStorage.getItem("currentPdfName");
     if (!savedName) return;
@@ -285,7 +286,6 @@ export default function Home() {
     if (!fileData) return;
     const { pdfBase64, annotations: savedAnnotations } = fileData;
     let annArr = savedAnnotations || [];
-    // Ensure each annotation has a unique id and update counter.
     annArr = annArr.map((a) => {
       if (a.id === undefined || a.id === null) {
         a.id = annotationIdCounter.current++;
@@ -321,14 +321,13 @@ export default function Home() {
           });
           setZoomValue("100%");
           setZoomScale(1.0);
-          // Force a redraw after a slight delay.
-          setTimeout(() => renderAllPages(1.0), 50);
+          // Rely on the useEffect on [pdfDoc, zoomScale] to render pages.
         });
       })
       .catch((err) => console.log("Error loading PDF:", err));
   }
 
-  // Auto-save: update savedPDFs mapping whenever pdfBytes or annotations change.
+  // Auto-save: update localStorage when pdfBytes or annotations change.
   useEffect(() => {
     if (!saveProgress || !pdfBytes) return;
     const savedPDFsStr = localStorage.getItem("savedPDFs") || "{}";
@@ -357,14 +356,19 @@ export default function Home() {
     annotationsRef.current = newAnnotations;
   }
 
-  // handleFileChange: on file upload, always treat the file as new.
+  // handleFileChange: on new file upload, clear previous PDF state.
   async function handleFileChange(e) {
     const file = e.target.files[0];
     if (!file || file.type !== "application/pdf") return;
     console.log("Uploading new PDF:", file.name);
-    // Always override current PDF on upload.
+    // Clear container and previous PDF state.
+    if (pdfContainerRef.current) {
+      pdfContainerRef.current.innerHTML = "";
+    }
+    setPdfDoc(null);
+    setPdfLoaded(false);
+    updateAnnotations([]);
     currentPdfName.current = file.name;
-    updateAnnotations([]); // clear annotations for a new file
     const reader = new FileReader();
     reader.onload = async () => {
       const bytes = new Uint8Array(reader.result);
@@ -382,12 +386,12 @@ export default function Home() {
       pageSizesRef.current = arr;
       setZoomValue("100%");
       setZoomScale(1.0);
-      renderAllPages(1.0);
+      // The useEffect on [pdfDoc, zoomScale] will now render the new document.
     };
     reader.readAsArrayBuffer(file);
   }
 
-  // Render PDF pages
+  // Render PDF pages.
   async function renderAllPages(scale) {
     if (!pdfDoc) return;
     const container = pdfContainerRef.current;
@@ -458,7 +462,7 @@ export default function Home() {
     return () => document.removeEventListener("mousedown", handleGlobalClick);
   }, []);
 
-  // Redraw a single box on blur to restore the resizer.
+  // Redraw a single annotation box.
   function redrawSingleBox(id, pageEl, oldBox) {
     console.log("Redrawing box for annotation id:", id);
     if (oldBox.parentNode) {
@@ -505,7 +509,6 @@ export default function Home() {
       box.style.height = ann.heightRatio * pageEl.clientHeight + "px";
     }
 
-    // Attach blur/focusout listeners with debounce.
     const scheduleRedraw = () => {
       if (!box._redrawTimer) {
         box._redrawTimer = setTimeout(() => {
@@ -587,7 +590,7 @@ export default function Home() {
       }
     });
 
-    // On focus: remove placeholder text if present.
+    // On focus: remove placeholder text.
     box.addEventListener("focus", () => {
       console.log("Box focused for id:", id);
       if (box.innerText === "Edit me!") {
@@ -611,7 +614,7 @@ export default function Home() {
       document.execCommand("insertText", false, txt);
     });
 
-    // Input event to update annotation text.
+    // Input event.
     box.addEventListener("input", () => {
       console.log("Input event in box id:", id, "new text:", box.innerText);
       updateAnnotations(
@@ -624,7 +627,7 @@ export default function Home() {
       );
     });
 
-    // Keydown: if box becomes empty, remove it.
+    // Remove box if empty.
     box.addEventListener("keydown", (e) => {
       if (
         (e.key === "Backspace" || e.key === "Delete") &&
