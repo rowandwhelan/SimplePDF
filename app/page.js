@@ -61,7 +61,8 @@ export default function Home() {
   // Global default text style (for new annotations)
   const [fontSize, setFontSize] = useState(14);
   const [textColor, setTextColor] = useState("#000000");
-  const [highlightColor, setHighlightColor] = useState("#ffff00");
+  // Default highlight now white
+  const [highlightColor, setHighlightColor] = useState("#ffffff");
 
   // Store original (unscaled) page sizes
   const pageSizesRef = useRef([]);
@@ -100,7 +101,7 @@ export default function Home() {
     "400%",
   ];
 
-  // Make sure to define gearRef and settingsRef.
+  // Ensure gearRef and settingsRef are defined.
   const gearRef = useRef(null);
   const settingsRef = useRef(null);
 
@@ -109,7 +110,7 @@ export default function Home() {
     if (str === "actual size") return 1.0;
     if (str === "page fit") {
       if (!pageSizesRef.current.length) return 1.0;
-      const offset = 60; // toolbar height offset
+      const offset = 60;
       const { height } = pageSizesRef.current[0];
       const scale = Math.max(0.1, (window.innerHeight - offset) / height);
       console.log("Page Fit scale computed:", scale);
@@ -179,8 +180,7 @@ export default function Home() {
     setShowZoomMenu(true);
   }
 
-  // Determine which style values to use in the toolbar:
-  // If an annotation is active, use its values; otherwise, use global defaults.
+  // Determine toolbar style values.
   const activeAnnotation = annotations.find((a) => a.id === activeAnnotationId);
   const currentFontSize = activeAnnotation
     ? activeAnnotation.fontSize
@@ -192,7 +192,7 @@ export default function Home() {
     ? activeAnnotation.highlight
     : highlightColor;
 
-  // When a style control changes, update only the active annotation and re‑focus its box.
+  // When a style control changes, update the active annotation and re‑focus.
   const updateActiveAnnotation = (prop, value) => {
     if (activeAnnotation) {
       const updated = annotationsRef.current.map((a) => {
@@ -208,13 +208,17 @@ export default function Home() {
       if (box) {
         if (prop === "fontSize") {
           box.style.fontSize = value * zoomScale + "px";
-          box.focus();
-          const range = document.createRange();
-          range.selectNodeContents(box);
-          range.collapse(false);
-          const sel = window.getSelection();
-          sel.removeAllRanges();
-          sel.addRange(range);
+          // Use a short timeout to ensure focus is restored.
+          setTimeout(() => {
+            box.focus();
+            // Move caret to end.
+            const range = document.createRange();
+            range.selectNodeContents(box);
+            range.collapse(false);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }, 5);
         } else if (prop === "color") {
           box.style.color = value;
           box.focus();
@@ -224,7 +228,6 @@ export default function Home() {
         }
       }
     } else {
-      // Update global defaults for new annotations.
       if (prop === "fontSize") setFontSize(value);
       if (prop === "color") setTextColor(value);
       if (prop === "highlight") setHighlightColor(value);
@@ -239,7 +242,7 @@ export default function Home() {
     }
   }, []);
 
-  // If saveProgress is off, clear stored data.
+  // Clear stored data if saving is off.
   useEffect(() => {
     if (!saveProgress) {
       localStorage.removeItem("savedPDFs");
@@ -248,7 +251,7 @@ export default function Home() {
     }
   }, [saveProgress]);
 
-  // Dark mode
+  // Dark mode setup.
   useEffect(() => {
     if (
       window.matchMedia &&
@@ -262,7 +265,7 @@ export default function Home() {
     document.body.classList.toggle("dark", darkMode);
   }, [darkMode]);
 
-  // Settings panel: use a click listener on the document to close panel only if click is outside.
+  // Settings panel: close only if click is outside.
   useEffect(() => {
     function handleDocumentClick(e) {
       if (
@@ -332,7 +335,7 @@ export default function Home() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [pdfBytes, saveProgress]);
 
-  // On mount, load saved PDF if exists.
+  // Load saved PDF on mount if exists.
   useEffect(() => {
     setTimeout(() => {
       const savedName = localStorage.getItem("currentPdfName");
@@ -345,7 +348,7 @@ export default function Home() {
     }, 100);
   }, []);
 
-  // Re-render pages when pdfDoc or zoomScale changes.
+  // Re-render pages on pdfDoc or zoomScale change.
   useEffect(() => {
     if (pdfDoc) {
       if (pdfContainerRef.current) {
@@ -393,7 +396,6 @@ export default function Home() {
         setPdfDoc(doc);
         setPdfLoaded(true);
         setNumPages(doc.numPages);
-        // Update page sizes
         const sizes = [];
         let count = 0;
         for (let i = 1; i <= doc.numPages; i++) {
@@ -406,7 +408,6 @@ export default function Home() {
             }
           });
         }
-        // Reset zoom to 100%
         setZoomValue("100%");
         setZoomScale(1.0);
       })
@@ -448,7 +449,6 @@ export default function Home() {
     if (pdfContainerRef.current) {
       pdfContainerRef.current.innerHTML = "";
     }
-    // Reset zoom to 100%
     setZoomValue("100%");
     setZoomScale(1.0);
     setPdfDoc(null);
@@ -1021,7 +1021,11 @@ export default function Home() {
               style={{ width: "36px", height: "36px" }}
             />
             {showSettings && (
-              <div className="settings-panel" ref={settingsRef}>
+              <div
+                className="settings-panel"
+                ref={settingsRef}
+                onClick={(e) => e.stopPropagation()}
+              >
                 <label className="settings-item">
                   <span>Dark Mode</span>
                   <input
@@ -1210,6 +1214,7 @@ export default function Home() {
         }
         .settings-item span {
           flex-grow: 1;
+          user-select: none;
         }
         .zoom-input {
           padding: 4px;
