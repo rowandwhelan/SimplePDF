@@ -109,7 +109,6 @@ export default function Home() {
   }
 
   /* ---------- Zoom Functions ---------- */
-  // Updated parseZoomValue uses original page dimensions.
   function parseZoomValue(str) {
     str = str.trim().toLowerCase();
     if (str === "actual size") return 1.0;
@@ -186,7 +185,6 @@ export default function Home() {
     sel.addRange(range);
   }
 
-  // Determine active annotation and defaults
   const activeAnnotation = annotations.find((a) => a.id === activeAnnotationId);
   const currentFontSize = activeAnnotation
     ? activeAnnotation.fontSize
@@ -198,7 +196,6 @@ export default function Home() {
     ? activeAnnotation.highlight
     : highlightColor;
 
-  /* ---------- Update Active Annotation ---------- */
   const updateActiveAnnotation = (prop, value) => {
     if (activeAnnotation) {
       const updated = annotationsRef.current.map((a) => {
@@ -344,20 +341,17 @@ export default function Home() {
     if (pdfDoc && pdfContainerRef.current) {
       const container = pdfContainerRef.current;
       const rect = container.getBoundingClientRect();
-      // Use the last stored mouse position or default to container center.
       let anchorX = rect.width / 2;
       let anchorY = rect.height / 2;
       if (scrollAnchorRef.current.mouseX !== undefined) {
         anchorX = scrollAnchorRef.current.mouseX - rect.left;
         anchorY = scrollAnchorRef.current.mouseY - rect.top;
       }
-      // Compute the ratios relative to the container scroll.
       const ratioX = (container.scrollLeft + anchorX) / container.scrollWidth;
       const ratioY = (container.scrollTop + anchorY) / container.scrollHeight;
 
       renderAllPages(zoomScale);
 
-      // After re-render, restore scroll so that the point under the mouse stays approximately fixed.
       setTimeout(() => {
         const newScrollLeft = ratioX * container.scrollWidth - anchorX;
         const newScrollTop = ratioY * container.scrollHeight - anchorY;
@@ -367,7 +361,6 @@ export default function Home() {
     }
   }, [zoomScale, pdfDoc]);
 
-  // When pdfDoc changes, do an initial render.
   useEffect(() => {
     if (pdfDoc && pdfContainerRef.current) {
       renderAllPages(zoomScale);
@@ -383,7 +376,6 @@ export default function Home() {
       if (!e.ctrlKey) return;
       e.preventDefault();
 
-      // Record mouse position.
       scrollAnchorRef.current = {
         mouseX: e.clientX,
         mouseY: e.clientY,
@@ -401,7 +393,6 @@ export default function Home() {
         newScale = Math.max(0.1, newScale - zoomStep);
       }
 
-      // Update immediate feedback.
       setTempZoomScale(newScale);
       setZoomValue(formatZoomValue(newScale));
 
@@ -515,14 +506,12 @@ export default function Home() {
   async function renderAllPages(scale) {
     if (!pdfDoc) return;
     const container = pdfContainerRef.current;
-    container.innerHTML = ""; // clear old pages
+    container.innerHTML = "";
 
-    // Use devicePixelRatio for crisp rendering.
     const dpr = window.devicePixelRatio || 1;
 
     for (let i = 1; i <= pdfDoc.numPages; i++) {
       const page = await pdfDoc.getPage(i);
-      // Get original dimensions.
       const origSize = originalPageSizesRef.current[i - 1] || {
         width: 600,
         height: 800,
@@ -534,7 +523,6 @@ export default function Home() {
       const roundedWidth = Math.round(cssWidth);
       const roundedHeight = Math.round(cssHeight);
 
-      // Create and size canvas.
       const canvas = document.createElement("canvas");
       const ctx = canvas.getContext("2d");
       canvas.width = Math.floor(roundedWidth * dpr);
@@ -546,7 +534,6 @@ export default function Home() {
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: ctx, viewport }).promise;
 
-      // Create page container.
       const pageDiv = document.createElement("div");
       pageDiv.className = "pdf-page";
       pageDiv.style.width = roundedWidth + "px";
@@ -555,7 +542,6 @@ export default function Home() {
       pageDiv.appendChild(canvas);
       container.appendChild(pageDiv);
 
-      // Create text layer.
       const textLayer = document.createElement("div");
       textLayer.className = "text-layer";
       textLayer.style.position = "absolute";
@@ -566,7 +552,6 @@ export default function Home() {
       textLayer.style.pointerEvents = "none";
       pageDiv.appendChild(textLayer);
 
-      // Save original and current sizes.
       pageSizesRef.current[i - 1] = {
         width: origWidth,
         height: origHeight,
@@ -575,7 +560,6 @@ export default function Home() {
       };
     }
 
-    // Re-apply annotations.
     applyAnnotationsAll();
   }
 
@@ -597,7 +581,6 @@ export default function Home() {
     });
   }
 
-  /* ---------- Create Annotation Box ---------- */
   function createAnnotationBox(ann, id, pageEl) {
     const { cssWidth, cssHeight } = pageSizesRef.current[ann.pageIndex];
     const finalFS = ann.fontSize * zoomScale;
@@ -821,7 +804,6 @@ export default function Home() {
     return box;
   }
 
-  /* ---------- New Text Box Placement ---------- */
   function handleAddTextBox() {
     if (!pdfLoaded) {
       alert("Please load a PDF first!");
@@ -885,7 +867,6 @@ export default function Home() {
     document.addEventListener("click", onClick);
   }
 
-  /* ---------- PDF Download (Export) ---------- */
   async function handleDownload() {
     if (!pdfLoaded || !pdfBytes) {
       alert("No PDF loaded!");
@@ -1058,9 +1039,6 @@ export default function Home() {
             </div>
           )}
         </div>
-        <button onClick={handleAddTextBox} className="button">
-          + Text
-        </button>
         <label style={{ marginLeft: "1rem" }}>Color:</label>
         <input
           type="color"
@@ -1085,6 +1063,14 @@ export default function Home() {
           }
           style={{ width: "60px" }}
         />
+        {/* + Text button moved right next to the Text Size input */}
+        <button
+          onClick={handleAddTextBox}
+          className="button"
+          style={{ marginLeft: "0.5rem" }}
+        >
+          + Text
+        </button>
         <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
           <button onClick={handleDownload} className="button">
             Download PDF
