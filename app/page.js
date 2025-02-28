@@ -102,6 +102,9 @@ export default function Home() {
   const lastWheelTimeRef = useRef(0);
   const finalTimerRef = useRef(null);
 
+  // Render cancellation token.
+  const renderIdRef = useRef(0);
+
   /* ---------- Helper: updateAnnotations ---------- */
   function updateAnnotations(newAnnotations) {
     setAnnotations(newAnnotations);
@@ -109,6 +112,7 @@ export default function Home() {
   }
 
   /* ---------- Zoom Functions ---------- */
+  // Use original page dimensions for accurate "Page Fit" and "Page Width"
   function parseZoomValue(str) {
     str = str.trim().toLowerCase();
     if (str === "actual size") return 1.0;
@@ -185,6 +189,7 @@ export default function Home() {
     sel.addRange(range);
   }
 
+  // Determine active annotation and defaults
   const activeAnnotation = annotations.find((a) => a.id === activeAnnotationId);
   const currentFontSize = activeAnnotation
     ? activeAnnotation.fontSize
@@ -196,6 +201,7 @@ export default function Home() {
     ? activeAnnotation.highlight
     : highlightColor;
 
+  /* ---------- Update Active Annotation ---------- */
   const updateActiveAnnotation = (prop, value) => {
     if (activeAnnotation) {
       const updated = annotationsRef.current.map((a) => {
@@ -336,36 +342,33 @@ export default function Home() {
     }, 100);
   }, []);
 
-  // When pdfDoc or zoomScale changes, re-render pages and restore scroll using center-on-mouse logic.
+  // Single useEffect that re-renders pages when either pdfDoc or zoomScale changes.
   useEffect(() => {
     if (pdfDoc && pdfContainerRef.current) {
       const container = pdfContainerRef.current;
       const rect = container.getBoundingClientRect();
+      // Determine the anchor point for center-on-mouse.
       let anchorX = rect.width / 2;
       let anchorY = rect.height / 2;
       if (scrollAnchorRef.current.mouseX !== undefined) {
         anchorX = scrollAnchorRef.current.mouseX - rect.left;
         anchorY = scrollAnchorRef.current.mouseY - rect.top;
       }
+      // Calculate ratios based on current scroll.
       const ratioX = (container.scrollLeft + anchorX) / container.scrollWidth;
       const ratioY = (container.scrollTop + anchorY) / container.scrollHeight;
 
-      renderAllPages(zoomScale);
-
-      setTimeout(() => {
-        const newScrollLeft = ratioX * container.scrollWidth - anchorX;
-        const newScrollTop = ratioY * container.scrollHeight - anchorY;
-        container.scrollLeft = newScrollLeft;
-        container.scrollTop = newScrollTop;
-      }, 0);
+      renderAllPages(zoomScale).then(() => {
+        // Restore scroll so the anchor remains in place.
+        setTimeout(() => {
+          const newScrollLeft = ratioX * container.scrollWidth - anchorX;
+          const newScrollTop = ratioY * container.scrollHeight - anchorY;
+          container.scrollLeft = newScrollLeft;
+          container.scrollTop = newScrollTop;
+        }, 0);
+      });
     }
   }, [zoomScale, pdfDoc]);
-
-  useEffect(() => {
-    if (pdfDoc && pdfContainerRef.current) {
-      renderAllPages(zoomScale);
-    }
-  }, [pdfDoc]);
 
   // Attach Ctrl+Wheel listener that uses center-on-mouse zoom and throttles/debounces updates.
   useEffect(() => {
@@ -376,6 +379,7 @@ export default function Home() {
       if (!e.ctrlKey) return;
       e.preventDefault();
 
+      // Record mouse position.
       scrollAnchorRef.current = {
         mouseX: e.clientX,
         mouseY: e.clientY,
@@ -393,6 +397,7 @@ export default function Home() {
         newScale = Math.max(0.1, newScale - zoomStep);
       }
 
+      // Immediate feedback update.
       setTempZoomScale(newScale);
       setZoomValue(formatZoomValue(newScale));
 
@@ -505,12 +510,17 @@ export default function Home() {
 
   async function renderAllPages(scale) {
     if (!pdfDoc) return;
+    // Increment the render cancellation token.
+    const currentRenderId = ++renderIdRef.current;
     const container = pdfContainerRef.current;
-    container.innerHTML = "";
+    container.innerHTML = ""; // clear old pages
 
     const dpr = window.devicePixelRatio || 1;
 
     for (let i = 1; i <= pdfDoc.numPages; i++) {
+      // If a new render was triggered, cancel this one.
+      if (currentRenderId !== renderIdRef.current) return;
+
       const page = await pdfDoc.getPage(i);
       const origSize = originalPageSizesRef.current[i - 1] || {
         width: 600,
@@ -560,7 +570,10 @@ export default function Home() {
       };
     }
 
-    applyAnnotationsAll();
+    // Only reapply annotations if this render hasn't been canceled.
+    if (currentRenderId === renderIdRef.current) {
+      applyAnnotationsAll();
+    }
   }
 
   function applyAnnotationsAll() {
@@ -581,19 +594,27 @@ export default function Home() {
     });
   }
 
+  /* ---------- Create Annotation Box ---------- */
   function createAnnotationBox(ann, id, pageEl) {
+    // Get current CSS dimensions for the page
     const { cssWidth, cssHeight } = pageSizesRef.current[ann.pageIndex];
     const finalFS = ann.fontSize * zoomScale;
+
+    // Create the container for the annotation box
     const box = document.createElement("div");
     box.className = "editable-text";
     box.setAttribute("data-annid", String(id));
+    // Ensure padding is included in width/height calculations
+    box.style.boxSizing = "border-box";
     box.style.fontSize = finalFS + "px";
     box.style.color = ann.color;
     box.style.backgroundColor = hexToRgba(ann.highlight, 0.4);
-    box.style.overflow = "hidden";
-    box.style.paddingBottom = "4px";
+    box.style.overflow = "visible";
+    // Increase bottom padding so the resizer is not cut off
+    box.style.paddingBottom = "14px";
     box.style.position = "absolute";
 
+    // Position the box based on ratios
     const xPx = ann.xRatio * cssWidth;
     const yPx = ann.yRatio * cssHeight;
     box.style.left = xPx + "px";
@@ -606,16 +627,29 @@ export default function Home() {
       box.style.height = (ann.heightRatio * cssHeight).toFixed(2) + "px";
     }
 
+    // Create the editable text span with explicit line-height for consistent layout.
     const textSpan = document.createElement("span");
     textSpan.className = "text-content";
     textSpan.contentEditable = pdfLoaded ? "true" : "false";
     textSpan.style.outline = "none";
     textSpan.style.display = "block";
     textSpan.style.verticalAlign = "top";
+    // Set an explicit line-height to maintain consistent height
+    textSpan.style.lineHeight = finalFS + "px";
+    // Ensure the text span covers the available area so clicks anywhere are captured.
+    textSpan.style.width = "100%";
+    textSpan.style.height = "100%";
+    textSpan.style.cursor = "text";
     textSpan.innerText = ann.text || "";
     if (ann.isNew) {
       textSpan.classList.add("placeholder");
     }
+
+    // Prevent the box's drag logic from triggering when clicking inside the text.
+    textSpan.addEventListener("mousedown", (e) => {
+      e.stopPropagation();
+    });
+
     textSpan.addEventListener("input", () => {
       updateAnnotations(
         annotationsRef.current.map((a) => {
@@ -630,7 +664,6 @@ export default function Home() {
       const pageRect = pageEl.getBoundingClientRect();
       const newWidthRatio = boxRect.width / pageRect.width;
       const newHeightRatio = boxRect.height / pageRect.height;
-
       updateAnnotations(
         annotationsRef.current.map((a) => {
           if (a.id === id) {
@@ -644,6 +677,7 @@ export default function Home() {
         })
       );
     });
+
     textSpan.addEventListener("focus", () => {
       setActiveAnnotationId(id);
       if (ann.isNew) {
@@ -656,10 +690,10 @@ export default function Home() {
         updateAnnotations(updated);
         textSpan.classList.remove("placeholder");
       }
-      setTimeout(() => {
-        placeCaretAtEndOf(textSpan);
-      }, 0);
+      // Removed the setTimeout call to force caret to the end,
+      // so now the browser will place the caret at the clicked position.
     });
+
     textSpan.addEventListener("keydown", (e) => {
       if (
         (e.key === "Backspace" || e.key === "Delete") &&
@@ -670,12 +704,15 @@ export default function Home() {
         box.remove();
       }
     });
+
     box.appendChild(textSpan);
 
+    // Create the resizer element
     const resizer = document.createElement("div");
     resizer.className = "resizer";
     box.appendChild(resizer);
 
+    // Mousedown on box: differentiate between editing (focusing the text) and dragging.
     box.addEventListener("mousedown", (e) => {
       if (e.target.classList.contains("resizer")) return;
       const rect = box.getBoundingClientRect();
@@ -688,9 +725,9 @@ export default function Home() {
         clickY > margin &&
         clickY < rect.height - margin
       ) {
+        // If clicking inside the text area, let the browser handle the caret position.
         if (document.activeElement !== textSpan) {
           textSpan.focus();
-          placeCaretAtEndOf(textSpan);
         }
         e.stopPropagation();
         e.preventDefault();
@@ -703,6 +740,7 @@ export default function Home() {
       setActiveAnnotationId(id);
     });
 
+    // Dragging logic.
     let isDragging = false;
     let offsetX = 0,
       offsetY = 0;
@@ -747,6 +785,7 @@ export default function Home() {
       }
     });
 
+    // Resizing logic.
     let isResizing = false;
     let startW = 0,
       startH = 0,
@@ -804,6 +843,7 @@ export default function Home() {
     return box;
   }
 
+  /* ---------- New Text Box Placement ---------- */
   function handleAddTextBox() {
     if (!pdfLoaded) {
       alert("Please load a PDF first!");
@@ -867,6 +907,7 @@ export default function Home() {
     document.addEventListener("click", onClick);
   }
 
+  /* ---------- PDF Download (Export) ---------- */
   async function handleDownload() {
     if (!pdfLoaded || !pdfBytes) {
       alert("No PDF loaded!");
@@ -971,8 +1012,9 @@ export default function Home() {
         });
       }
 
+      const baselineOffset = fs * 0.25; // tweak this value as needed
       for (let i = 0; i < wrapped.length; i++) {
-        const baselineY = topY - (i + 1) * lineSpace;
+        const baselineY = topY - (i + 1) * lineSpace + baselineOffset;
         page.drawText(wrapped[i], {
           x: leftX,
           y: baselineY,
@@ -1039,6 +1081,9 @@ export default function Home() {
             </div>
           )}
         </div>
+        <button onClick={handleAddTextBox} className="button">
+          + Text
+        </button>
         <label style={{ marginLeft: "1rem" }}>Color:</label>
         <input
           type="color"
@@ -1063,14 +1108,6 @@ export default function Home() {
           }
           style={{ width: "60px" }}
         />
-        {/* + Text button moved right next to the Text Size input */}
-        <button
-          onClick={handleAddTextBox}
-          className="button"
-          style={{ marginLeft: "0.5rem" }}
-        >
-          + Text
-        </button>
         <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
           <button onClick={handleDownload} className="button">
             Download PDF
