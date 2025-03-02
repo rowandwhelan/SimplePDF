@@ -216,14 +216,16 @@ export default function Home() {
       );
       if (box) {
         if (prop === "fontSize") {
-          box.style.fontSize = value * zoomScale + "px";
-          setTimeout(() => {
-            const textEl = box.querySelector(".text-content");
-            if (textEl) {
-              textEl.focus();
-              placeCaretAtEndOf(textEl);
-            }
-          }, 20);
+          const newFontSize = value * zoomScale;
+          // Update the container's font-size.
+          box.style.fontSize = newFontSize + "px";
+          const textEl = box.querySelector(".text-content");
+          if (textEl) {
+            // Apply our helper to update both font size and dynamic line-height.
+            applyFontStyles(textEl, newFontSize);
+            textEl.focus();
+            placeCaretAtEndOf(textEl);
+          }
         } else if (prop === "color") {
           box.style.color = value;
           setTimeout(() => {
@@ -576,6 +578,33 @@ export default function Home() {
     }
   }
 
+  // Returns a dynamic line-height ratio based on the given font size in pixels.
+  function getLineHeightRatio(fontSizePx) {
+    // For very small text (<= 12px), use a ratio around 1.2.
+    const baseRatio = 1;
+    // For very large text (>= 48px), use a ratio around 1.6.
+    const maxRatio = 1;
+    const minSize = 12; // below or equal -> line-height ratio = baseRatio.
+    const maxSize = 48; // above or equal -> line-height ratio = maxRatio.
+
+    if (fontSizePx <= minSize) return baseRatio;
+    if (fontSizePx >= maxSize) return maxRatio;
+
+    // Interpolate linearly between baseRatio and maxRatio.
+    return (
+      baseRatio +
+      ((maxRatio - baseRatio) * (fontSizePx - minSize)) / (maxSize - minSize)
+    );
+  }
+
+  // Helper that applies the given font size and its corresponding line-height to the element.
+  function applyFontStyles(element, fontSizeValue) {
+    // fontSizeValue should already include the zoomScale (i.e. the final font size in pixels)
+    const ratio = getLineHeightRatio(fontSizeValue);
+    element.style.fontSize = fontSizeValue + "px";
+    element.style.lineHeight = ratio + "em";
+  }
+
   function applyAnnotationsAll() {
     const container = pdfContainerRef.current;
     if (!container) return;
@@ -604,7 +633,6 @@ export default function Home() {
     const box = document.createElement("div");
     box.className = "editable-text";
     box.setAttribute("data-annid", String(id));
-    // Ensure padding is included in width/height calculations
     box.style.boxSizing = "border-box";
     box.style.fontSize = finalFS + "px";
     box.style.color = ann.color;
@@ -627,15 +655,18 @@ export default function Home() {
       box.style.height = (ann.heightRatio * cssHeight).toFixed(2) + "px";
     }
 
-    // Create the editable text span with explicit line-height for consistent layout.
+    // Create the editable text span
     const textSpan = document.createElement("span");
     textSpan.className = "text-content";
     textSpan.contentEditable = pdfLoaded ? "true" : "false";
     textSpan.style.outline = "none";
     textSpan.style.display = "block";
     textSpan.style.verticalAlign = "top";
-    // Set an explicit line-height to maintain consistent height
-    textSpan.style.lineHeight = finalFS + "px";
+
+    // Apply dynamic font size and line-height using our helper function
+    // (finalFS already includes zoomScale)
+    applyFontStyles(textSpan, finalFS);
+
     // Ensure the text span covers the available area so clicks anywhere are captured.
     textSpan.style.width = "100%";
     textSpan.style.height = "100%";
@@ -690,8 +721,6 @@ export default function Home() {
         updateAnnotations(updated);
         textSpan.classList.remove("placeholder");
       }
-      // Removed the setTimeout call to force caret to the end,
-      // so now the browser will place the caret at the clicked position.
     });
 
     textSpan.addEventListener("keydown", (e) => {
@@ -712,7 +741,7 @@ export default function Home() {
     resizer.className = "resizer";
     box.appendChild(resizer);
 
-    // Mousedown on box: differentiate between editing (focusing the text) and dragging.
+    // Mousedown on box: differentiate between editing and dragging.
     box.addEventListener("mousedown", (e) => {
       if (e.target.classList.contains("resizer")) return;
       const rect = box.getBoundingClientRect();
@@ -725,7 +754,6 @@ export default function Home() {
         clickY > margin &&
         clickY < rect.height - margin
       ) {
-        // If clicking inside the text area, let the browser handle the caret position.
         if (document.activeElement !== textSpan) {
           textSpan.focus();
         }
@@ -740,7 +768,7 @@ export default function Home() {
       setActiveAnnotationId(id);
     });
 
-    // Dragging logic.
+    // Dragging logic
     let isDragging = false;
     let offsetX = 0,
       offsetY = 0;
@@ -785,7 +813,7 @@ export default function Home() {
       }
     });
 
-    // Resizing logic.
+    // Resizing logic
     let isResizing = false;
     let startW = 0,
       startH = 0,
@@ -1081,9 +1109,6 @@ export default function Home() {
             </div>
           )}
         </div>
-        <button onClick={handleAddTextBox} className="button">
-          + Text
-        </button>
         <label style={{ marginLeft: "1rem" }}>Color:</label>
         <input
           type="color"
@@ -1108,6 +1133,9 @@ export default function Home() {
           }
           style={{ width: "60px" }}
         />
+        <button onClick={handleAddTextBox} className="button">
+          + Text
+        </button>
         <div style={{ marginLeft: "auto", display: "flex", gap: "10px" }}>
           <button onClick={handleDownload} className="button">
             Download PDF
