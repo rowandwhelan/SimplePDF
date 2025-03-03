@@ -949,6 +949,7 @@ export default function Home() {
     const pdfDocLib = await PDFDocument.load(pdfBytes);
     const font = await pdfDocLib.embedFont(StandardFonts.Helvetica);
 
+    // Helper to break long words to fit within a given max width.
     function breakLongWord(word, font, fs, maxW) {
       const out = [];
       let cur = "";
@@ -965,6 +966,7 @@ export default function Home() {
       return out;
     }
 
+    // Helper to wrap a line into multiple lines if needed.
     function wrapLine(line, font, fs, maxW) {
       const tokens = line.split(/\s+/).filter(Boolean);
       const lines = [];
@@ -989,6 +991,7 @@ export default function Home() {
       return lines;
     }
 
+    // Helper to convert hex color to rgb.
     function hexToRgb(hex) {
       hex = hex.replace("#", "");
       if (hex.length === 3) {
@@ -1006,6 +1009,7 @@ export default function Home() {
 
     const pages = pdfDocLib.getPages();
 
+    // Process each annotation and add it to the corresponding PDF page.
     for (let ann of annotationsRef.current) {
       if (!pages[ann.pageIndex]) continue;
 
@@ -1053,11 +1057,17 @@ export default function Home() {
       }
     }
 
+    // Save the modified PDF.
     const outBytes = await pdfDocLib.save();
     const blob = new Blob([outBytes], { type: "application/pdf" });
     const link = document.createElement("a");
     link.href = URL.createObjectURL(blob);
-    link.download = "edited.pdf";
+
+    // Use the original PDF filename (without .pdf) and append "-edited.pdf".
+    const originalName = currentPdfName.current || "downloaded";
+    const editedName = originalName.replace(/\.pdf$/i, "") + "-edited.pdf";
+    link.download = editedName;
+
     link.click();
   }
 
